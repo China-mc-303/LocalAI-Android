@@ -334,6 +334,37 @@ fun SettingsScreen(
             }
         }
 
+        SettingCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("版本 v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        state.updateInfo?.let { "GitHub 上发现新版本 v${it.version}" }
+                            ?: "每次进入应用时自动检查 GitHub 最新版本",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (state.updateInfo != null) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(
+                    onClick = { viewModel.checkUpdate(manual = true) },
+                    enabled = !state.updateChecking,
+                ) {
+                    Text(if (state.updateChecking) "检查中…" else "检查更新")
+                }
+            }
+            if (state.updateInfo != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { viewModel.showUpdateDialog() }) {
+                        Text(if (state.updateApkPath != null) "查看安装包" else "查看更新")
+                    }
+                    if (state.updateApkPath != null) {
+                        OutlinedButton(onClick = { viewModel.installUpdate() }) { Text("立即安装") }
+                    }
+                }
+            }
+        }
+
         Spacer(Modifier.height(4.dp))
         Text(
             "关于",

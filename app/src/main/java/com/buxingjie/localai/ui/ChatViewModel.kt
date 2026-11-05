@@ -6,8 +6,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.buxingjie.localai.BuildConfig
 import com.buxingjie.localai.data.AiProvider
 import com.buxingjie.localai.data.ChatSession
 import com.buxingjie.localai.data.ChatStore
@@ -29,6 +31,9 @@ import com.buxingjie.localai.llm.Prompts
 import com.buxingjie.localai.net.ChatMsg
 import com.buxingjie.localai.net.RemoteChatClient
 import com.buxingjie.localai.net.RemoteRequest
+import com.buxingjie.localai.net.UpdateChecker
+import com.buxingjie.localai.net.UpdateDownloader
+import com.buxingjie.localai.net.UpdateInfo
 import com.buxingjie.localai.service.QuickStopService
 import com.buxingjie.localai.tools.PhoneControl
 import com.buxingjie.localai.tools.ShellRunner
@@ -36,6 +41,7 @@ import com.buxingjie.localai.tools.ToolCall
 import com.buxingjie.localai.tools.ToolProtocol
 import com.buxingjie.localai.tools.WebFetcher
 import com.buxingjie.localai.tools.WorkspaceFile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,6 +50,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 import java.util.UUID
 
 data class UiMessage(
@@ -103,6 +110,13 @@ data class ChatUiState(
     val previewText: String = "",
     val previewEntries: List<DocEntry> = emptyList(),
     val previewLoading: Boolean = false,
+    val updateInfo: UpdateInfo? = null,
+    val updateDialogVisible: Boolean = false,
+    val updateChecking: Boolean = false,
+    val updateDownloading: Boolean = false,
+    val updateProgress: Float = 0f,
+    val updateError: String? = null,
+    val updateApkPath: String? = null,
 )
 
 private data class EngineSnapshot(
@@ -194,12 +208,139 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             _state.update { it.copy(selectedModelPath = null) }
         }
+
+        checkUpdate()
     }
 
     override fun onCleared() {
         runCatching { getApplication<Application>().unregisterReceiver(stopReceiver) }
         client.cancel()
         super.onCleared()
+    }
+
+    // ---------------- update ----------------
+
+    fun checkUpdate(manual: Boolean = false) {
+        if (_state.value.updateChecking) return
+        _state.update { it.copy(updateChecking = true, updateError = null) }
+        viewModelScope.launch {
+            val current = BuildConfig.VERSION_NAME
+            val info = UpdateChecker.latest()
+            if (info == null) {
+                _state.update {
+                    it.copy(
+                        updateChecking = false,
+                        status = if (manual) "检查更新失败，请检查网络后重试" else it.status,
+                    )
+                }
+                return@launch
+            }
+            val newer = UpdateChecker.isNewer(info.version, current)
+            _state.update {
+                it.copy(
+                    updateChecking = false,
+                    updateInfo = if (newer) info else it.updateInfo,
+                    updateDialogVisible = newer,
+                    status = when {
+                        newer -> "发现新版本 v${info.version}"
+                        manual -> "当前已是最新版本 v$current"
+                        else -> it.status
+                    },
+                )
+            }
+        }
+    }
+
+    fun showUpdateDialog() {
+        if (_state.value.updateInfo != null) {
+            _state.update { it.copy(updateDialogVisible = true, updateError = null) }
+        }
+    }
+
+    fun dismissUpdate() {
+        _state.update { it.copy(updateDialogVisible = false) }
+    }
+
+    fun downloadUpdate() {
+        val info = _state.value.updateInfo ?: return
+        if (_state.value.updateDownloading) return
+        val app = getApplication<Application>()
+        val dir = File(app.getExternalFilesDir(null) ?: app.filesDir, "updates").apply { mkdirs() }
+        val target = File(dir, "LocalAI-${info.version}.apk")
+        if (target.exists() && info.apkSize > 0 && target.length() == info.apkSize) {
+            _state.update {
+                it.copy(
+                    updateApkPath = target.absolutePath,
+                    updateProgress = 1f,
+                    updateError = null,
+                    updateDialogVisible = true,
+                )
+            }
+            return
+        }
+        _state.update {
+            it.copy(
+                updateDownloading = true,
+                updateProgress = 0f,
+                updateError = null,
+                updateDialogVisible = true,
+            )
+        }
+        viewModelScope.launch {
+            val temp = File(dir, target.name + ".part")
+            try {
+                if (temp.exists()) temp.delete()
+                UpdateDownloader.download(info.apkUrl, temp) { received, total ->
+                    val expected = if (total > 0) total else info.apkSize
+                    if (expected > 0) {
+                        _state.update {
+                            it.copy(updateProgress = (received.toFloat() / expected).coerceIn(0f, 1f))
+                        }
+                    }
+                }
+                if (target.exists()) target.delete()
+                if (!temp.renameTo(target)) throw IOException("保存安装包失败")
+                _state.update {
+                    it.copy(
+                        updateDownloading = false,
+                        updateProgress = 1f,
+                        updateApkPath = target.absolutePath,
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                runCatching { temp.delete() }
+                _state.update {
+                    it.copy(
+                        updateDownloading = false,
+                        updateError = "下载失败：${e.message ?: "网络错误"}",
+                    )
+                }
+            }
+        }
+    }
+
+    fun installUpdate() {
+        val path = _state.value.updateApkPath ?: return
+        val file = File(path)
+        if (!file.exists() || file.length() <= 0) {
+            _state.update { it.copy(updateError = "安装包不存在，请重新下载") }
+            return
+        }
+        val app = getApplication<Application>()
+        runCatching {
+            val uri = FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            app.startActivity(intent)
+        }.onFailure { e ->
+            _state.update {
+                it.copy(updateError = "无法打开安装界面：${e.message ?: "请允许安装未知应用"}")
+            }
+        }
     }
 
     fun clearError() = _state.update { it.copy(error = null) }

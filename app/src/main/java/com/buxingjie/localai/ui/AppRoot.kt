@@ -124,4 +124,13 @@ fun AppRoot(viewModel: ChatViewModel = viewModel()) {
             onClose = { showTerminal = false },
         )
     }
+
+    if (state.updateDialogVisible && state.updateInfo != null) {
+        UpdateDialog(
+            state = state,
+            onDownload = { viewModel.downloadUpdate() },
+            onInstall = { viewModel.installUpdate() },
+            onDismiss = { viewModel.dismissUpdate() },
+        )
+    }
 }
