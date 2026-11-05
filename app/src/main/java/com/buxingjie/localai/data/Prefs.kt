@@ -1,10 +1,13 @@
 package com.buxingjie.localai.data
 
 import android.content.Context
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 class Prefs(context: Context) {
 
     private val sp = context.getSharedPreferences("localai_prefs", Context.MODE_PRIVATE)
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     var modelPath: String?
         get() = sp.getString("model_path", null)
@@ -33,6 +36,19 @@ class Prefs(context: Context) {
     var lastSessionId: String?
         get() = sp.getString("last_session", null)
         set(value) = sp.edit().putString("last_session", value).apply()
+
+    /** AI 终端与命令的工作目录 */
+    var workingDir: String?
+        get() = sp.getString("working_dir", null)
+        set(value) = sp.edit().putString("working_dir", value).apply()
+
+    var downloadHistory: List<DownloadRecord>
+        get() = runCatching {
+            json.decodeFromString<List<DownloadRecord>>(sp.getString("download_history", "[]") ?: "[]")
+        }.getOrDefault(emptyList())
+        set(value) = sp.edit()
+            .putString("download_history", json.encodeToString(value.takeLast(50)))
+            .apply()
 
     /** 当前使用的引擎：local 或 AiProvider.id */
     var engine: String

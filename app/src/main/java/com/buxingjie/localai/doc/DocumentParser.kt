@@ -9,17 +9,63 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.IOException
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 
 class DocumentParser(private val context: Context) {
 
     suspend fun parse(uri: Uri): ParsedDoc = withContext(Dispatchers.IO) {
         val name = displayName(uri)
-        val bytes = readBytes(uri)
+        parseBytes(name, readBytes(uri))
+    }
+
+    /** 解析工作目录等本地路径上的文件。 */
+    suspend fun parseFile(file: File): ParsedDoc = withContext(Dispatchers.IO) {
+        if (!file.isFile) throw IOException("不是有效文件")
+        if (file.length() > MAX_FILE_BYTES) throw IOException("文件超过 80MB，请拆分后再试")
+        parseBytes(file.name, file.readBytes())
+    }
+
+    /** 列出 zip 压缩包内的文件。 */
+    suspend fun listArchive(file: File): List<DocEntry> = withContext(Dispatchers.IO) {
+        if (!file.name.lowercase().endsWith(".zip")) throw IOException("暂只支持查看 zip 压缩包")
+        ZipFile(file).use { zip ->
+            zip.entries().asSequence()
+                .filter { !it.isDirectory }
+                .take(300)
+                .map { DocEntry(it.name, it.size.toInt()) }
+                .toList()
+        }
+    }
+
+    /** 读取 zip 内某个文件的可读内容。 */
+    suspend fun readArchiveEntry(file: File, entryName: String): String = withContext(Dispatchers.IO) {
+        ZipFile(file).use { zip ->
+            val entry = zip.getEntry(entryName) ?: throw IOException("压缩包里没有 $entryName")
+            if (entry.size > MAX_FILE_BYTES) throw IOException("该文件超过 80MB")
+            val bytes = zip.getInputStream(entry).use { it.readBytes() }
+            val ext = entryName.substringAfterLast('.', "").lowercase()
+            when (ext) {
+                "pdf" -> parsePdf(entryName, bytes).first
+                "docx" -> parseDocx(entryName, bytes).first
+                "pptx" -> parsePptx(entryName, bytes).first
+                "xlsx" -> parseXlsx(entryName, bytes).first
+                "zip" -> parseZip(entryName, bytes, 1).first
+                else -> if (looksBinary(bytes)) {
+                    throw IOException("这是二进制文件，无法直接预览")
+                } else {
+                    decodeText(bytes).take(MAX_CHARS_PER_FILE)
+                }
+            }
+        }
+    }
+
+    private fun parseBytes(name: String, bytes: ByteArray): ParsedDoc {
         val ext = name.substringAfterLast('.', "").lowercase()
 
         val (text, entries, note) = when (ext) {
@@ -35,7 +81,7 @@ class DocumentParser(private val context: Context) {
         if (text.isBlank()) {
             throw IOException(if (note.isNotBlank()) note else "没有从文件中提取到文字")
         }
-        ParsedDoc(
+        return ParsedDoc(
             id = UUID.randomUUID().toString(),
             name = name,
             text = text,

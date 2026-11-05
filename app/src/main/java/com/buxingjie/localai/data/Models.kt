@@ -31,6 +31,15 @@ data class RemoteModel(
     val fallbackUrl: String,
 )
 
+@kotlinx.serialization.Serializable
+data class DownloadRecord(
+    val id: String,
+    val name: String,
+    val path: String,
+    val sizeBytes: Long,
+    val time: Long,
+)
+
 class ModelRepository(private val context: Context) {
 
     val modelsDir: File = File(context.filesDir, "models").apply { mkdirs() }

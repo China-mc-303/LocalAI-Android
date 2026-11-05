@@ -27,9 +27,15 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.buxingjie.localai.BuildConfig
@@ -45,6 +51,8 @@ fun SettingsScreen(
     val context = LocalContext.current
     val maxThreads = Runtime.getRuntime().availableProcessors().coerceAtLeast(4)
     val provider = AiProvider.fromId(state.engineId)
+    var dirInput by remember { mutableStateOf(state.workingDir) }
+    LaunchedEffect(state.workingDir) { dirInput = state.workingDir }
     Column(
         Modifier
             .fillMaxSize()
@@ -128,6 +136,37 @@ fun SettingsScreen(
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
+        }
+
+        SettingCard {
+            Text("工作目录", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "每个 AI 的终端、shell 命令、工作目录文件浏览都使用这个目录",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = dirInput,
+                onValueChange = { dirInput = it },
+                label = { Text("绝对路径") },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "默认：应用专属目录（免权限）",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { viewModel.setWorkingDir(dirInput) }) { Text("保存") }
+            }
+            Text(
+                "在对话页右上角点终端图标，可查看该 AI 的终端历史和此目录下的文件。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         SettingCard {
@@ -306,8 +345,10 @@ fun SettingsScreen(
                 "步行街工作室\n\n" +
                 "• 本地 GGUF 模型推理、文件解析、聊天记录全部在手机本地完成，不上传服务器。\n" +
                 "• 使用 DeepSeek / Kimi / 豆包 / 元宝 / GPT 等在线模型时，对话内容会发送到对应平台，API Key 仅保存在本机。\n" +
+                "• 每个 AI 都有独立终端：可手动执行命令，AI 也能通过 shell 工具在工作目录中查看文件、解压 zip。\n" +
+                "• 工作目录可在上方设置，终端里能浏览目录、解析文件、查看 zip 内文件清单。\n" +
                 "• “查看网页”和“操控手机”是同一个工具协议，本地与在线模型均可使用。\n" +
-                "• 手机操控基于无障碍服务，AI 操作期间屏幕顶部始终有紧急停止按钮，可随时中断。\n" +
+                "• 手机操控基于无障碍服务，AI 操作期间屏幕顶部始终有紧急关闭按钮，可随时中断。\n" +
                 "• 语音输入调用手机自带的识别服务，部分机型可能需要联网。\n" +
                 "• 小模型能力有限，复杂问题请配合文件资料使用。",
             style = MaterialTheme.typography.bodySmall,
@@ -377,10 +418,7 @@ private fun PermissionRow(
 
 @Composable
 private fun SettingCard(content: @Composable () -> Unit) {
-    Card(
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-    ) {
+    GlassPanel(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             content()
         }

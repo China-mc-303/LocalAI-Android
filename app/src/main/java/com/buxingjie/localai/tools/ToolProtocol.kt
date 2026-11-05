@@ -22,6 +22,7 @@ object ToolProtocol {
     val PROMPT = """
 你可以使用以下工具来完成用户的请求。需要工具时，只输出一行 JSON（不要加解释、不要用代码块），然后等待工具结果：
 {"tool":"fetch_url","url":"https://example.com"}
+{"tool":"shell","cmd":"ls -la"}
 {"tool":"open_app","app":"微信"}
 {"tool":"screen_text"}
 {"tool":"tap","x":0.50,"y":0.82}
@@ -33,9 +34,10 @@ object ToolProtocol {
 规则：
 1. 坐标 x/y 都是 0~1 的相对值，先调用 screen_text 查看屏幕上各元素的坐标和文字，再决定点击哪里。
 2. 查看网页用 fetch_url；用户给出网址时也可以直接抓取。
-3. 一次只调用一个工具，拿到结果后再继续，最多 4 轮。
-4. 不需要工具时，直接正常回答，不要输出 JSON。
-5. 用户可能随时紧急停止手机操作，被停止后立即停止调用工具。
+3. shell 命令在用户设置的“工作目录”中执行，适合查看文件、解压 zip、统计内容；输出会显示在终端里。
+4. 一次只调用一个工具，拿到结果后再继续，最多 4 轮。
+5. 不需要工具时，直接正常回答，不要输出 JSON。
+6. 用户可能随时紧急停止手机操作，被停止后立即停止调用工具。
 """.trim()
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -57,7 +59,7 @@ object ToolProtocol {
             val name = obj?.get("tool")?.jsonPrimitive?.contentOrNull?.trim()
             if (!name.isNullOrBlank()) {
                 val toolName = normalize(name)
-                if (toolName in phoneTools || toolName == "fetch_url") {
+                if (toolName in phoneTools || toolName == "fetch_url" || toolName == "shell") {
                     return ToolCall(toolName, obj!!, raw)
                 }
             }
@@ -68,6 +70,7 @@ object ToolProtocol {
 
     private fun normalize(name: String): String = when (name.lowercase()) {
         "fetch_url", "fetchurl", "web", "browse", "read_url", "open_url" -> "fetch_url"
+        "shell", "bash", "terminal", "exec", "run_command", "cmd" -> "shell"
         "open_app", "openapp", "launch_app", "start_app" -> "open_app"
         "screen_text", "screentext", "read_screen", "screen" -> "screen_text"
         "tap", "click" -> "tap"
@@ -106,6 +109,7 @@ object ToolProtocol {
 
     fun describe(call: ToolCall): String = when (call.name) {
         "fetch_url" -> "查看网页 ${call.args.str("url").take(60)}"
+        "shell" -> "执行终端命令 ${call.args.str("cmd").take(60)}"
         "open_app" -> "打开应用「${call.args.str("app")}」"
         "screen_text" -> "读取屏幕内容"
         "tap" -> "点击屏幕 (${call.args.str("x")}, ${call.args.str("y")})"
@@ -147,6 +151,8 @@ object ToolProtocol {
         }
         return "未知工具：${call.name}"
     }
+
+    fun arg(call: ToolCall, key: String): String = call.args.str(key)
 
     private fun JsonObject.str(key: String): String =
         this[key]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()

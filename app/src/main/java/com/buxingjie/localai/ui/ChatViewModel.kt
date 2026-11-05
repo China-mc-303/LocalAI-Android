@@ -11,12 +11,16 @@ import androidx.lifecycle.viewModelScope
 import com.buxingjie.localai.data.AiProvider
 import com.buxingjie.localai.data.ChatSession
 import com.buxingjie.localai.data.ChatStore
+import com.buxingjie.localai.data.DownloadRecord
 import com.buxingjie.localai.data.LocalModel
 import com.buxingjie.localai.data.ModelRepository
 import com.buxingjie.localai.data.Prefs
 import com.buxingjie.localai.data.RemoteModel
 import com.buxingjie.localai.data.StoredMessage
+import com.buxingjie.localai.data.TerminalLine
+import com.buxingjie.localai.data.TerminalStore
 import com.buxingjie.localai.doc.DocumentParser
+import com.buxingjie.localai.doc.DocEntry
 import com.buxingjie.localai.doc.ParsedDoc
 import com.buxingjie.localai.doc.TextTools
 import com.buxingjie.localai.llm.GenerateResult
@@ -27,9 +31,11 @@ import com.buxingjie.localai.net.RemoteChatClient
 import com.buxingjie.localai.net.RemoteRequest
 import com.buxingjie.localai.service.QuickStopService
 import com.buxingjie.localai.tools.PhoneControl
+import com.buxingjie.localai.tools.ShellRunner
 import com.buxingjie.localai.tools.ToolCall
 import com.buxingjie.localai.tools.ToolProtocol
 import com.buxingjie.localai.tools.WebFetcher
+import com.buxingjie.localai.tools.WorkspaceFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -85,6 +91,18 @@ data class ChatUiState(
     val accessibilityEnabled: Boolean = false,
     val overlayEnabled: Boolean = false,
     val toolRunning: Boolean = false,
+    val downloadHistory: List<DownloadRecord> = emptyList(),
+    val workingDir: String = "",
+    val terminalLines: List<TerminalLine> = emptyList(),
+    val terminalBusy: Boolean = false,
+    val workspacePath: String = "",
+    val workspaceFiles: List<WorkspaceFile> = emptyList(),
+    val workspaceLoading: Boolean = false,
+    val previewPath: String = "",
+    val previewTitle: String? = null,
+    val previewText: String = "",
+    val previewEntries: List<DocEntry> = emptyList(),
+    val previewLoading: Boolean = false,
 )
 
 private data class EngineSnapshot(
@@ -105,6 +123,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val parser = DocumentParser(application)
     private val engine = LlamaEngine()
     private val client = RemoteChatClient()
+    private val terminalStore = TerminalStore(application)
+
+    private val defaultWorkspace: String =
+        File(application.getExternalFilesDir(null) ?: application.filesDir, "workspace")
+            .apply { mkdirs() }
+            .absolutePath
+    private val workDir: String = prefs.workingDir
+        ?.takeIf { it.isNotBlank() && File(it).isDirectory }
+        ?: defaultWorkspace
 
     private val _state = MutableStateFlow(
         ChatUiState(
@@ -118,6 +145,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             webToolsEnabled = prefs.webToolsEnabled,
             phoneToolsEnabled = prefs.phoneToolsEnabled,
             engineId = prefs.engine,
+            downloadHistory = prefs.downloadHistory,
+            workingDir = workDir,
+            workspacePath = workDir,
+            terminalLines = terminalStore.load(prefs.engine),
         )
     )
     val state = _state.asStateFlow()
@@ -145,6 +176,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         refreshEngineState()
         refreshSystemState()
+        prefs.workingDir = workDir
+        refreshWorkspace(workDir)
 
         val app = getApplication<Application>()
         val filter = IntentFilter(PhoneControl.ACTION_EMERGENCY_STOP)
@@ -251,6 +284,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         prefs.engine = id
         needPrime = true
         refreshEngineState()
+        _state.update { it.copy(terminalLines = terminalStore.load(id)) }
         val label = _state.value.engineLabel
         val hint = if (_state.value.engineReady) "已切换到 $label" else "已切换到 $label，请先完成配置"
         _state.update { it.copy(status = hint) }
@@ -376,6 +410,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 refreshEngineState()
             }
             repository.delete(model)
+            removeDownloadRecord(model.path)
             refreshModels()
             _state.update { it.copy(status = "已删除 ${model.displayName}") }
         }
@@ -395,6 +430,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }.onSuccess { model ->
                 _state.update { it.copy(downloads = it.downloads - "import") }
                 refreshModels()
+                addDownloadRecord("import-${System.currentTimeMillis()}", model.file.name, model)
                 selectModel(model)
                 _state.update { it.copy(status = "模型导入成功") }
             }.onFailure { error ->
@@ -424,6 +460,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }.onSuccess { model ->
                 refreshModels()
+                addDownloadRecord(remote.id, remote.name, model)
                 _state.update {
                     it.copy(
                         downloads = it.downloads - remote.id,
@@ -439,6 +476,198 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
+        }
+    }
+
+    // ---------------- downloads ----------------
+
+    fun loadDownloaded(record: DownloadRecord) {
+        val file = File(record.path)
+        if (!file.exists()) {
+            _state.update { it.copy(error = "模型文件已不存在：${record.path}") }
+            removeDownloadRecord(record.path)
+            return
+        }
+        prefs.engine = "local"
+        refreshEngineState()
+        _state.update { it.copy(terminalLines = terminalStore.load("local")) }
+        loadModel(LocalModel(file, record.name, file.length()))
+    }
+
+    fun deleteDownloaded(record: DownloadRecord) {
+        val file = File(record.path)
+        if (file.exists()) {
+            deleteModel(LocalModel(file, record.name, file.length()))
+        } else {
+            removeDownloadRecord(record.path)
+            _state.update { it.copy(status = "已移除下载记录") }
+        }
+    }
+
+    private fun addDownloadRecord(id: String, name: String, model: LocalModel) {
+        val record = DownloadRecord(
+            id = id,
+            name = name,
+            path = model.path,
+            sizeBytes = model.sizeBytes,
+            time = System.currentTimeMillis(),
+        )
+        val history = (prefs.downloadHistory.filterNot { it.path == model.path } + record).takeLast(50)
+        prefs.downloadHistory = history
+        _state.update { it.copy(downloadHistory = history) }
+    }
+
+    private fun removeDownloadRecord(path: String) {
+        val history = prefs.downloadHistory.filterNot { it.path == path }
+        prefs.downloadHistory = history
+        _state.update { it.copy(downloadHistory = history) }
+    }
+
+    // ---------------- terminal & workspace ----------------
+
+    fun runTerminal(command: String) {
+        val value = command.trim()
+        if (value.isEmpty() || _state.value.terminalBusy) return
+        appendTerminal("$ $value", "input")
+        viewModelScope.launch {
+            _state.update { it.copy(terminalBusy = true) }
+            val result = withContext(Dispatchers.IO) {
+                ShellRunner.run(value, _state.value.workingDir)
+            }
+            appendTerminal(result.output, if (result.ok) "output" else "error")
+            _state.update { it.copy(terminalBusy = false) }
+            refreshWorkspace(_state.value.workspacePath)
+        }
+    }
+
+    fun clearTerminal() {
+        terminalStore.clear(prefs.engine)
+        _state.update { it.copy(terminalLines = emptyList()) }
+    }
+
+    private fun appendTerminal(text: String, kind: String) {
+        if (text.isBlank()) return
+        val engineId = prefs.engine
+        val lines = (_state.value.terminalLines + TerminalLine(text, kind, System.currentTimeMillis()))
+            .takeLast(300)
+        _state.update { it.copy(terminalLines = lines) }
+        terminalStore.save(engineId, lines)
+    }
+
+    fun setWorkingDir(path: String) {
+        val trimmed = path.trim()
+        if (trimmed.isEmpty()) {
+            _state.update { it.copy(error = "工作目录不能为空") }
+            return
+        }
+        val dir = File(trimmed)
+        if (!ShellRunner.ensureDir(trimmed)) {
+            _state.update { it.copy(error = "无法创建目录：$trimmed（请检查权限或换个路径）") }
+            return
+        }
+        prefs.workingDir = dir.absolutePath
+        _state.update {
+            it.copy(
+                workingDir = dir.absolutePath,
+                workspacePath = dir.absolutePath,
+                status = "工作目录已设置为 ${dir.absolutePath}",
+            )
+        }
+        appendTerminal("工作目录已切换到 ${dir.absolutePath}", "info")
+        refreshWorkspace(dir.absolutePath)
+    }
+
+    fun refreshWorkspace(path: String? = null) {
+        val root = _state.value.workingDir
+        val requested = path?.takeIf { it.isNotBlank() } ?: _state.value.workspacePath.ifBlank { root }
+        val target = if (root.isBlank() || !requested.startsWith(root)) root else requested
+        viewModelScope.launch {
+            _state.update { it.copy(workspaceLoading = true, workspacePath = target) }
+            val files = withContext(Dispatchers.IO) { ShellRunner.listDir(target) }
+            _state.update { it.copy(workspaceLoading = false, workspaceFiles = files) }
+        }
+    }
+
+    fun openWorkspaceFile(path: String) {
+        val file = File(path)
+        if (!file.isFile) return
+        viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    previewPath = file.absolutePath,
+                    previewTitle = file.name,
+                    previewText = "正在解析…",
+                    previewEntries = emptyList(),
+                    previewLoading = true,
+                )
+            }
+            runCatching {
+                val name = file.name.lowercase()
+                when {
+                    name.endsWith(".zip") -> {
+                        val entries = parser.listArchive(file)
+                        val firstText = entries.firstOrNull()?.let { entry ->
+                            runCatching {
+                                parser.readArchiveEntry(file, entry.path).take(2000)
+                            }.getOrDefault("")
+                        }.orEmpty()
+                        entries to firstText
+                    }
+                    name.endsWith(".rar") || name.endsWith(".7z") -> {
+                        emptyList<DocEntry>() to "暂不支持直接读取 rar / 7z，请先解压成 zip 后再查看。"
+                    }
+                    else -> {
+                        val doc = parser.parseFile(file)
+                        emptyList<DocEntry>() to doc.text.take(3000)
+                    }
+                }
+            }.onSuccess { (entries, text) ->
+                _state.update {
+                    it.copy(
+                        previewEntries = entries,
+                        previewText = text.ifBlank { "压缩包内没有可预览的文本，请点上方文件查看" },
+                        previewLoading = false,
+                    )
+                }
+            }.onFailure { failure ->
+                _state.update {
+                    it.copy(
+                        previewText = "解析失败：${failure.message ?: "未知错误"}",
+                        previewLoading = false,
+                    )
+                }
+            }
+        }
+    }
+
+    fun readArchiveEntry(entryName: String) {
+        val path = _state.value.previewPath
+        if (path.isBlank()) return
+        viewModelScope.launch {
+            _state.update { it.copy(previewLoading = true) }
+            runCatching {
+                parser.readArchiveEntry(File(path), entryName).take(4000)
+            }.onSuccess { text ->
+                _state.update {
+                    it.copy(previewText = "【$entryName】\n\n$text", previewLoading = false)
+                }
+            }.onFailure { failure ->
+                _state.update {
+                    it.copy(previewText = "读取失败：${failure.message ?: "未知错误"}", previewLoading = false)
+                }
+            }
+        }
+    }
+
+    fun closePreview() {
+        _state.update {
+            it.copy(
+                previewPath = "",
+                previewTitle = null,
+                previewText = "",
+                previewEntries = emptyList(),
+                previewLoading = false,
+            )
         }
     }
 
@@ -552,13 +781,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val base = Prompts.system(_state.value.workMode)
         val web = _state.value.webToolsEnabled
         val phone = _state.value.phoneToolsEnabled
-        return if (web || phone) {
-            base + "\n\n" + ToolProtocol.PROMPT +
-                (if (web) "\n\n（联网查看网页已开启）" else "\n\n（联网查看网页已关闭）") +
-                (if (phone) "\n（手机操控已开启）" else "\n（手机操控已关闭）")
-        } else {
-            base
-        }
+        return base + "\n\n" + ToolProtocol.PROMPT +
+            (if (web) "\n\n（联网查看网页已开启）" else "\n\n（联网查看网页已关闭）") +
+            (if (phone) "\n（手机操控已开启）" else "\n（手机操控已关闭）") +
+            "\n（终端工作目录：${_state.value.workingDir}）"
     }
 
     private fun startGeneration(
@@ -785,6 +1011,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      */
     private suspend fun executeTool(call: ToolCall, answerId: String): String? {
         val app = getApplication<Application>()
+        if (call.name == "shell") {
+            val command = ToolProtocol.arg(call, "cmd")
+            if (command.isBlank()) return "shell 缺少 cmd 参数"
+            appendTerminal("$ $command", "input")
+            _state.update { it.copy(status = "执行终端命令：${command.take(40)}…") }
+            val result = withContext(Dispatchers.IO) {
+                ShellRunner.run(command, _state.value.workingDir)
+            }
+            appendTerminal(result.output, if (result.ok) "output" else "error")
+            _state.update { it.copy(status = null) }
+            refreshWorkspace(_state.value.workspacePath)
+            return "命令已执行（${if (result.ok) "成功" else "失败"}），工作目录 ${_state.value.workingDir}\n输出：\n${result.output.take(3000)}"
+        }
+
         val phoneAction = PhoneControl.isPhoneAction(call.name)
         _state.update {
             it.copy(

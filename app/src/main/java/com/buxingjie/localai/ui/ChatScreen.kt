@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
@@ -55,6 +56,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -65,6 +68,7 @@ fun ChatScreen(
     state: ChatUiState,
     viewModel: ChatViewModel,
     onOpenModels: () -> Unit,
+    onOpenTerminal: () -> Unit,
 ) {
     val context = LocalContext.current
     var input by rememberSaveable { mutableStateOf("") }
@@ -116,6 +120,7 @@ fun ChatScreen(
         ChatTopBar(
             state = state,
             onOpenModels = onOpenModels,
+            onOpenTerminal = onOpenTerminal,
             onNewChat = {
                 viewModel.newChat()
                 input = ""
@@ -250,9 +255,10 @@ fun ChatScreen(
 private fun ChatTopBar(
     state: ChatUiState,
     onOpenModels: () -> Unit,
+    onOpenTerminal: () -> Unit,
     onNewChat: () -> Unit,
 ) {
-    Surface(color = MaterialTheme.colorScheme.surface) {
+    Surface(color = Color.Transparent) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -296,6 +302,9 @@ private fun ChatTopBar(
             if (state.generating) {
                 CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(8.dp))
+            }
+            IconButton(onClick = onOpenTerminal) {
+                Icon(Icons.Outlined.Terminal, contentDescription = "终端")
             }
             IconButton(onClick = onNewChat) {
                 Icon(Icons.Outlined.AddComment, contentDescription = "新对话")
@@ -375,8 +384,8 @@ private fun MessageBubble(message: UiMessage) {
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
     ) {
         Surface(
-            color = if (isUser) MaterialTheme.colorScheme.primaryContainer
-            else MaterialTheme.colorScheme.surfaceVariant,
+            color = if (isUser) Color(0x2E2DD4BF) else Color(0x14FFFFFF),
+            border = BorderStroke(1.dp, GlassBorder),
             shape = RoundedCornerShape(
                 topStart = 16.dp,
                 topEnd = 16.dp,

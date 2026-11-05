@@ -6,8 +6,8 @@
 
 | 文件 | 说明 |
 |---|---|
-| [LocalAI-v2.0.0.apk](https://github.com/China-mc-303/LocalAI-Android/releases/download/v2.0.0/LocalAI-v2.0.0.apk) | 安装包，Android 8.0+ / arm64-v8a |
-| [LocalAI-v2.0.0-source.zip](https://github.com/China-mc-303/LocalAI-Android/releases/download/v2.0.0/LocalAI-v2.0.0-source.zip) | 完整源码包（含 llama.cpp） |
+| [LocalAI-v3.0.0.apk](https://github.com/China-mc-303/LocalAI-Android/releases/download/v3.0.0/LocalAI-v3.0.0.apk) | 安装包，Android 8.0+ / arm64-v8a |
+| [LocalAI-v3.0.0-source.zip](https://github.com/China-mc-303/LocalAI-Android/releases/download/v3.0.0/LocalAI-v3.0.0-source.zip) | 完整源码包（含 llama.cpp） |
 
 ## 仓库结构
 
@@ -21,9 +21,14 @@ build.gradle.kts      工程配置
 
 ## 功能
 
+- 液态玻璃风格的半透明 UI（渐变光斑背景 + 磨砂玻璃卡片）
 - 本地 GGUF 模型推理（Qwen2.5 0.5B / 1.5B / 3B），流式输出、多轮对话
 - 在线大模型：DeepSeek、Kimi、豆包（火山方舟）、元宝（腾讯混元）、GPT（可选）、自定义 OpenAI 兼容接口
   - 在「设置」中填写 API Key、模型名、Base URL，每个平台独立保存，Key 只存本机
+- 下载列表：查看下载进度、安装状态与历史记录，可直接加载或删除
+- 每个 AI 都有独立终端：本地模型与每个在线平台各自保存命令历史，可执行 ls/cat/unzip 等命令
+  - AI 也能通过 shell 工具在工作目录中执行命令
+- 工作目录可在设置中修改；终端内可浏览目录、解析文件、查看 zip 内文件清单
 - 模型导入（手机内任意 GGUF）或 App 内下载（ModelScope 源）
 - 文件问答：zip 压缩包、pdf、docx、pptx、xlsx、txt、md、csv、json、代码
 - 文档摘要、要点提取、中英互译
@@ -38,7 +43,8 @@ build.gradle.kts      工程配置
 1. 安装 APK
 2. 本地模型：进入「模型」页，下载 Qwen2.5-1.5B（约 1GB）或导入已有 GGUF，回到「对话」页使用
 3. 在线模型：进入「设置 → 模型来源」，选择 DeepSeek / Kimi / 豆包 / 元宝 / GPT，填写 API Key
-4. 手机操控：在「设置」开启「AI 操控手机」，并开启系统「无障碍服务」、授予「悬浮窗」权限
+4. 终端与工作目录：在「设置」里设置工作目录；对话页右上角终端图标可打开当前 AI 的终端并浏览目录
+5. 手机操控：在「设置」开启「AI 操控手机」，并开启系统「无障碍服务」、授予「悬浮窗」权限
 
 ## 构建
 
