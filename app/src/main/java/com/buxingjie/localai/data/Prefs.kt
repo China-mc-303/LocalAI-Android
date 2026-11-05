@@ -34,6 +34,44 @@ class Prefs(context: Context) {
         get() = sp.getString("last_session", null)
         set(value) = sp.edit().putString("last_session", value).apply()
 
+    /** 当前使用的引擎：local 或 AiProvider.id */
+    var engine: String
+        get() = sp.getString("engine", "local") ?: "local"
+        set(value) = sp.edit().putString("engine", value).apply()
+
+    var webToolsEnabled: Boolean
+        get() = sp.getBoolean("tool_web", true)
+        set(value) = sp.edit().putBoolean("tool_web", value).apply()
+
+    var phoneToolsEnabled: Boolean
+        get() = sp.getBoolean("tool_phone", true)
+        set(value) = sp.edit().putBoolean("tool_phone", value).apply()
+
+    fun apiKey(provider: AiProvider): String =
+        sp.getString("p_${provider.id}_key", "") ?: ""
+
+    fun setApiKey(provider: AiProvider, value: String) =
+        sp.edit().putString("p_${provider.id}_key", value.trim()).apply()
+
+    fun baseUrl(provider: AiProvider): String {
+        val saved = sp.getString("p_${provider.id}_base", null)
+        return if (saved.isNullOrBlank()) provider.defaultBaseUrl else saved
+    }
+
+    fun setBaseUrl(provider: AiProvider, value: String) =
+        sp.edit().putString("p_${provider.id}_base", value.trim()).apply()
+
+    fun modelName(provider: AiProvider): String {
+        val saved = sp.getString("p_${provider.id}_model", null)
+        return if (saved.isNullOrBlank()) provider.defaultModel else saved
+    }
+
+    fun setModelName(provider: AiProvider, value: String) =
+        sp.edit().putString("p_${provider.id}_model", value.trim()).apply()
+
+    fun config(provider: AiProvider): RemoteEngineConfig =
+        RemoteEngineConfig(provider, baseUrl(provider), modelName(provider), apiKey(provider))
+
     companion object {
         fun defaultThreads(): Int {
             val cores = Runtime.getRuntime().availableProcessors()

@@ -1,5 +1,8 @@
 package com.buxingjie.localai.ui
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,14 +20,20 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.buxingjie.localai.BuildConfig
+import com.buxingjie.localai.data.AiProvider
 import kotlin.math.roundToInt
 
 @Composable
@@ -33,7 +42,9 @@ fun SettingsScreen(
     viewModel: ChatViewModel,
     onOpenModels: () -> Unit,
 ) {
+    val context = LocalContext.current
     val maxThreads = Runtime.getRuntime().availableProcessors().coerceAtLeast(4)
+    val provider = AiProvider.fromId(state.engineId)
     Column(
         Modifier
             .fillMaxSize()
@@ -42,6 +53,146 @@ fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Text("设置", style = MaterialTheme.typography.titleLarge)
+
+        SettingCard {
+            Text("模型来源", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "本地模型完全离线；在线模型需要联网并填写对应平台的 API Key",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            EngineRow(
+                title = "本地 GGUF 模型",
+                subtitle = when {
+                    state.modelLoading -> "正在加载…"
+                    state.modelLoaded -> "${state.modelName} 已加载"
+                    else -> "尚未加载，前往模型页导入或下载"
+                },
+                selected = state.engineId == "local",
+                onClick = { viewModel.selectEngine("local") },
+            )
+            AiProvider.entries.forEach { item ->
+                EngineRow(
+                    title = item.label,
+                    subtitle = item.vendor + " · " + item.modelHint,
+                    selected = state.engineId == item.id,
+                    onClick = { viewModel.selectEngine(item.id) },
+                    badge = if (state.engineId == item.id && state.remoteApiKey.isNotBlank()) "已填写 Key" else null,
+                )
+            }
+        }
+
+        if (provider != null) {
+            SettingCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${provider.label} 接入配置", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            provider.keyHint,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(onClick = { viewModel.resetRemoteConfig() }) { Text("恢复默认") }
+                }
+                OutlinedTextField(
+                    value = state.remoteApiKey,
+                    onValueChange = { viewModel.setRemoteApiKey(it) },
+                    label = { Text("API Key") },
+                    placeholder = { Text(provider.keyHint) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                )
+                OutlinedTextField(
+                    value = state.remoteModel,
+                    onValueChange = { viewModel.setRemoteModel(it) },
+                    label = { Text("模型名称") },
+                    placeholder = { Text(provider.modelHint) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = state.remoteBaseUrl,
+                    onValueChange = { viewModel.setRemoteBaseUrl(it) },
+                    label = { Text("接口地址 Base URL") },
+                    placeholder = { Text("https://…/v1") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    if (state.engineReady) "配置完整，可以直接对话" else "填写 API Key 后即可使用（Key 只保存在本机）",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (state.engineReady) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+
+        SettingCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("联网查看网页", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "所有模型都能打开网址、读取网页正文；也可以直接把链接发到对话框",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = state.webToolsEnabled,
+                    onCheckedChange = { viewModel.setWebToolsEnabled(it) },
+                )
+            }
+        }
+
+        SettingCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("AI 操控手机", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "通过无障碍服务读取屏幕并点击、滑动、输入、打开应用。操控期间屏幕顶部会显示“紧急停止”按钮",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = state.phoneToolsEnabled,
+                    onCheckedChange = { viewModel.setPhoneToolsEnabled(it) },
+                )
+            }
+            HorizontalDivider(Modifier.padding(vertical = 6.dp))
+            PermissionRow(
+                title = "无障碍服务",
+                enabled = state.accessibilityEnabled,
+                action = "去开启",
+            ) {
+                runCatching {
+                    context.startActivity(
+                        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+            }
+            PermissionRow(
+                title = "悬浮窗（紧急停止按钮）",
+                enabled = state.overlayEnabled,
+                action = "去授权",
+            ) {
+                runCatching {
+                    context.startActivity(
+                        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+            }
+            Text(
+                "提示：无障碍服务需要在系统设置中手动开启，重启手机后如失效请重新开启。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
 
         SettingCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -153,14 +304,74 @@ fun SettingsScreen(
         Text(
             "本地AI v${BuildConfig.VERSION_NAME}\n" +
                 "步行街工作室\n\n" +
-                "• 模型推理、文件解析、聊天记录全部在手机本地完成，不上传服务器。\n" +
-                "• 首次使用需要联网下载模型或自行导入 GGUF 文件。\n" +
+                "• 本地 GGUF 模型推理、文件解析、聊天记录全部在手机本地完成，不上传服务器。\n" +
+                "• 使用 DeepSeek / Kimi / 豆包 / 元宝 / GPT 等在线模型时，对话内容会发送到对应平台，API Key 仅保存在本机。\n" +
+                "• “查看网页”和“操控手机”是同一个工具协议，本地与在线模型均可使用。\n" +
+                "• 手机操控基于无障碍服务，AI 操作期间屏幕顶部始终有紧急停止按钮，可随时中断。\n" +
                 "• 语音输入调用手机自带的识别服务，部分机型可能需要联网。\n" +
                 "• 小模型能力有限，复杂问题请配合文件资料使用。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 24.dp),
         )
+    }
+}
+
+@Composable
+private fun EngineRow(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    badge: String? = null,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, style = MaterialTheme.typography.bodyMedium)
+                if (badge != null) {
+                    Text(
+                        " · $badge",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (!selected) {
+            TextButton(onClick = onClick) { Text("选择") }
+        }
+    }
+}
+
+@Composable
+private fun PermissionRow(
+    title: String,
+    enabled: Boolean,
+    action: String,
+    onAction: () -> Unit,
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                if (enabled) "已开启" else "未开启",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+            )
+        }
+        TextButton(onClick = onAction) { Text(if (enabled) "查看" else action) }
     }
 }
 

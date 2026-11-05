@@ -69,7 +69,7 @@ fun ChatScreen(
     val context = LocalContext.current
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
-    val canSend = input.isNotBlank() && state.modelLoaded && !state.generating
+    val canSend = input.isNotBlank() && state.engineReady && !state.generating
 
     val fileLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -192,18 +192,20 @@ fun ChatScreen(
                 .imePadding()
                 .padding(horizontal = 10.dp, vertical = 8.dp)
         ) {
-            if (!state.modelLoaded && !state.modelLoading) {
+            if (!state.engineReady && !state.modelLoading) {
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "尚未加载本地模型",
+                        if (state.engineId == "local") "尚未加载本地模型" else "在线模型尚未配置完成",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
-                    TextButton(onClick = onOpenModels) { Text("去加载") }
+                    TextButton(onClick = onOpenModels) {
+                        Text(if (state.engineId == "local") "去加载" else "去设置")
+                    }
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -265,7 +267,7 @@ private fun ChatTopBar(
                             .width(6.dp)
                             .height(6.dp)
                             .background(
-                                if (state.modelLoaded) MaterialTheme.colorScheme.primary
+                                if (state.engineReady) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.error,
                                 RoundedCornerShape(3.dp)
                             )
@@ -274,14 +276,15 @@ private fun ChatTopBar(
                     Text(
                         text = when {
                             state.modelLoading -> "正在加载模型…"
-                            state.modelLoaded -> state.modelName
-                            else -> "未加载模型 · 点击加载"
+                            state.engineReady -> state.engineLabel
+                            state.engineId == "local" -> "未加载模型 · 点击加载"
+                            else -> "${state.engineLabel} · 未配置"
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.clickable { onOpenModels() },
                     )
-                    if (state.modelLoaded) {
+                    if (state.engineReady) {
                         Text(
                             text = if (state.workMode) " · 办公" else " · 通用",
                             style = MaterialTheme.typography.labelSmall,
@@ -337,22 +340,26 @@ private fun EmptyChat(
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "完全在手机本地运行，断网也能用。",
+            text = if (state.engineId == "local") {
+                "完全在手机本地运行，断网也能用。"
+            } else {
+                "当前使用 ${state.engineLabel}，可联网查看网页与操控手机。"
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(20.dp))
-        if (!state.modelLoaded) {
+        if (!state.engineReady) {
             AssistChip(
                 onClick = onOpenModels,
-                label = { Text("先加载一个本地模型") },
+                label = { Text(if (state.engineId == "local") "先加载一个本地模型" else "先去设置填写 API Key") },
             )
             Spacer(Modifier.height(20.dp))
         }
         tips.forEach { tip ->
             AssistChip(
-                onClick = { if (state.modelLoaded) onSend(tip) },
+                onClick = { if (state.engineReady) onSend(tip) },
                 label = { Text(tip) },
                 modifier = Modifier.padding(vertical = 4.dp),
             )

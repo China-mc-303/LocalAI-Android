@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">本地AI</string>
+    <string name="accessibility_service_desc">允许本地AI读取当前屏幕内容，并模拟点击、滑动、输入、返回等操作，帮助用户完成跨应用任务。AI 操作期间屏幕顶部会显示“紧急停止”按钮，随时可以中断。</string>
 </resources>

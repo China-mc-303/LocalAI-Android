@@ -48,6 +48,11 @@ fun AppRoot(viewModel: ChatViewModel = viewModel()) {
         }
     }
 
+    LaunchedEffect(tabIndex) {
+        viewModel.refreshSystemState()
+        if (tabIndex == 2) viewModel.refreshModels()
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
@@ -72,7 +77,7 @@ fun AppRoot(viewModel: ChatViewModel = viewModel()) {
                 Tab.CHAT -> ChatScreen(
                     state = state,
                     viewModel = viewModel,
-                    onOpenModels = { tabIndex = 2 },
+                    onOpenModels = { tabIndex = if (state.engineId == "local") 2 else 3 },
                 )
                 Tab.FILES -> FilesScreen(
                     state = state,

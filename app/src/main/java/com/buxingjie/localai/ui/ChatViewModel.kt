@@ -1,9 +1,14 @@
 package com.buxingjie.localai.ui
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.buxingjie.localai.data.AiProvider
 import com.buxingjie.localai.data.ChatSession
 import com.buxingjie.localai.data.ChatStore
 import com.buxingjie.localai.data.LocalModel
@@ -17,6 +22,14 @@ import com.buxingjie.localai.doc.TextTools
 import com.buxingjie.localai.llm.GenerateResult
 import com.buxingjie.localai.llm.LlamaEngine
 import com.buxingjie.localai.llm.Prompts
+import com.buxingjie.localai.net.ChatMsg
+import com.buxingjie.localai.net.RemoteChatClient
+import com.buxingjie.localai.net.RemoteRequest
+import com.buxingjie.localai.service.QuickStopService
+import com.buxingjie.localai.tools.PhoneControl
+import com.buxingjie.localai.tools.ToolCall
+import com.buxingjie.localai.tools.ToolProtocol
+import com.buxingjie.localai.tools.WebFetcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -60,6 +73,28 @@ data class ChatUiState(
     val error: String? = null,
     val downloads: Map<String, DownloadState> = emptyMap(),
     val docBusy: Boolean = false,
+    val engineId: String = "local",
+    val engineLabel: String = "本地模型",
+    val engineReady: Boolean = false,
+    val remoteProviderId: String = "",
+    val remoteBaseUrl: String = "",
+    val remoteModel: String = "",
+    val remoteApiKey: String = "",
+    val webToolsEnabled: Boolean = true,
+    val phoneToolsEnabled: Boolean = true,
+    val accessibilityEnabled: Boolean = false,
+    val overlayEnabled: Boolean = false,
+    val toolRunning: Boolean = false,
+)
+
+private data class EngineSnapshot(
+    val id: String,
+    val label: String,
+    val ready: Boolean,
+    val providerId: String,
+    val baseUrl: String,
+    val model: String,
+    val apiKey: String,
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -69,6 +104,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val chatStore = ChatStore(application)
     private val parser = DocumentParser(application)
     private val engine = LlamaEngine()
+    private val client = RemoteChatClient()
 
     private val _state = MutableStateFlow(
         ChatUiState(
@@ -79,6 +115,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             threads = prefs.threads,
             installedModels = repository.installed(),
             selectedModelPath = prefs.modelPath,
+            webToolsEnabled = prefs.webToolsEnabled,
+            phoneToolsEnabled = prefs.phoneToolsEnabled,
+            engineId = prefs.engine,
         )
     )
     val state = _state.asStateFlow()
@@ -86,6 +125,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var session: ChatSession = prefs.lastSessionId?.let { chatStore.load(it) } ?: chatStore.newSession()
     private var needPrime = true
     private var sendJob: Job? = null
+
+    private val stopReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == PhoneControl.ACTION_EMERGENCY_STOP) {
+                emergencyStop()
+            }
+        }
+    }
 
     init {
         val stored = session.messages
@@ -96,6 +143,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 })
             }
         }
+        refreshEngineState()
+        refreshSystemState()
+
+        val app = getApplication<Application>()
+        val filter = IntentFilter(PhoneControl.ACTION_EMERGENCY_STOP)
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            app.registerReceiver(stopReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            app.registerReceiver(stopReceiver, filter)
+        }
+
         val path = prefs.modelPath
         if (path != null && File(path).exists()) {
             loadModel(LocalModel(File(path), File(path).name.removeSuffix(".gguf"), File(path).length()))
@@ -104,11 +163,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    override fun onCleared() {
+        runCatching { getApplication<Application>().unregisterReceiver(stopReceiver) }
+        client.cancel()
+        super.onCleared()
+    }
+
     fun clearError() = _state.update { it.copy(error = null) }
 
     fun stop() {
         engine.cancel()
+        client.cancel()
         _state.update { it.copy(status = "正在停止…") }
+    }
+
+    private fun emergencyStop() {
+        engine.cancel()
+        client.cancel()
+        _state.update { it.copy(status = "已紧急停止手机操控") }
     }
 
     fun newChat() {
@@ -127,10 +199,116 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(workMode = enabled, status = if (enabled) "已切换到办公助手" else "已切换到通用助手") }
     }
 
+    // ---------------- engine ----------------
+
+    private fun engineSnapshot(): EngineSnapshot {
+        val provider = AiProvider.fromId(prefs.engine)
+        return if (provider == null) {
+            EngineSnapshot(
+                id = "local",
+                label = "本地模型",
+                ready = _state.value.modelLoaded,
+                providerId = "",
+                baseUrl = "",
+                model = "",
+                apiKey = "",
+            )
+        } else {
+            val config = prefs.config(provider)
+            EngineSnapshot(
+                id = provider.id,
+                label = "${provider.label} · ${config.model}",
+                ready = config.ready,
+                providerId = provider.id,
+                baseUrl = config.baseUrl,
+                model = config.model,
+                apiKey = config.apiKey,
+            )
+        }
+    }
+
+    private fun refreshEngineState() {
+        val snapshot = engineSnapshot()
+        _state.update {
+            it.copy(
+                engineId = snapshot.id,
+                engineLabel = snapshot.label,
+                engineReady = snapshot.ready,
+                remoteProviderId = snapshot.providerId,
+                remoteBaseUrl = snapshot.baseUrl,
+                remoteModel = snapshot.model,
+                remoteApiKey = snapshot.apiKey,
+            )
+        }
+    }
+
+    private fun currentProvider(): AiProvider? = AiProvider.fromId(prefs.engine)
+
+    fun selectEngine(id: String) {
+        val valid = if (id == "local") true else AiProvider.fromId(id) != null
+        if (!valid) return
+        if (prefs.engine == id) return
+        prefs.engine = id
+        needPrime = true
+        refreshEngineState()
+        val label = _state.value.engineLabel
+        val hint = if (_state.value.engineReady) "已切换到 $label" else "已切换到 $label，请先完成配置"
+        _state.update { it.copy(status = hint) }
+    }
+
+    fun setRemoteApiKey(value: String) {
+        val provider = currentProvider() ?: return
+        prefs.setApiKey(provider, value)
+        refreshEngineState()
+    }
+
+    fun setRemoteModel(value: String) {
+        val provider = currentProvider() ?: return
+        prefs.setModelName(provider, value)
+        refreshEngineState()
+    }
+
+    fun setRemoteBaseUrl(value: String) {
+        val provider = currentProvider() ?: return
+        prefs.setBaseUrl(provider, value)
+        refreshEngineState()
+    }
+
+    fun resetRemoteConfig() {
+        val provider = currentProvider() ?: return
+        prefs.setApiKey(provider, "")
+        prefs.setBaseUrl(provider, provider.defaultBaseUrl)
+        prefs.setModelName(provider, provider.defaultModel)
+        refreshEngineState()
+        _state.update { it.copy(status = "已恢复 ${provider.label} 默认配置") }
+    }
+
+    fun setWebToolsEnabled(enabled: Boolean) {
+        prefs.webToolsEnabled = enabled
+        _state.update { it.copy(webToolsEnabled = enabled) }
+    }
+
+    fun setPhoneToolsEnabled(enabled: Boolean) {
+        prefs.phoneToolsEnabled = enabled
+        refreshSystemState()
+        _state.update { it.copy(phoneToolsEnabled = enabled) }
+    }
+
+    fun refreshSystemState() {
+        val app = getApplication<Application>()
+        _state.update {
+            it.copy(
+                accessibilityEnabled = PhoneControl.serviceReady(),
+                overlayEnabled = PhoneControl.overlayAllowed(app),
+            )
+        }
+    }
+
     // ---------------- models ----------------
 
     fun refreshModels() {
         _state.update { it.copy(installedModels = repository.installed()) }
+        refreshEngineState()
     }
 
     fun selectModel(model: LocalModel) {
@@ -176,6 +354,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
+            refreshEngineState()
         }
     }
 
@@ -184,6 +363,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             engine.unload()
             needPrime = true
             _state.update { it.copy(modelLoaded = false, modelInfo = "", status = "模型已卸载") }
+            refreshEngineState()
         }
     }
 
@@ -193,6 +373,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 engine.unload()
                 prefs.modelPath = null
                 _state.update { it.copy(modelLoaded = false, modelInfo = "", selectedModelPath = null) }
+                refreshEngineState()
             }
             repository.delete(model)
             refreshModels()
@@ -316,22 +497,47 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (text.isBlank()) return
         val current = _state.value
         if (current.generating) return
-        if (!current.modelLoaded) {
-            _state.update { it.copy(error = "还没有加载模型，请先到“模型”页加载") }
+        if (!current.engineReady) {
+            _state.update {
+                it.copy(error = if (current.engineId == "local") "还没有加载本地模型，请先到“模型”页加载" else "请先在设置中填写在线模型的 API Key")
+            }
             return
         }
         val history = current.messages.map { StoredMessage(it.role, it.content) }
-        val modelText = buildModelText(text, current.docs)
-        startGeneration(text, modelText, history)
+        val url = if (current.webToolsEnabled) WebFetcher.firstUrl(text) else null
+        if (url == null) {
+            val modelText = buildModelText(text, current.docs)
+            startGeneration(text, modelText, history)
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(generating = true, status = "正在读取网页：$url", error = null) }
+            val page = runCatching { withContext(Dispatchers.IO) { WebFetcher.fetch(url) } }.getOrElse { null }
+            _state.update {
+                it.copy(
+                    generating = false,
+                    status = null,
+                    error = if (page == null) "网页读取失败，将仅根据你的文字回答" else null,
+                )
+            }
+            val context = buildModelText(text, current.docs)
+            val modelText = if (page.isNullOrBlank()) context else {
+                "$context\n\n【用户消息里的网页内容：$url】\n${page.take(4000)}"
+            }
+            startGeneration(text, modelText, history)
+        }
     }
 
     private fun sendPrompt(display: String, modelText: String) {
-        if (!_state.value.modelLoaded) {
-            _state.update { it.copy(error = "还没有加载模型，请先到“模型”页加载") }
+        val current = _state.value
+        if (!current.engineReady) {
+            _state.update {
+                it.copy(error = if (current.engineId == "local") "还没有加载本地模型，请先到“模型”页加载" else "请先在设置中填写在线模型的 API Key")
+            }
             return
         }
-        if (_state.value.generating) return
-        val history = _state.value.messages.map { StoredMessage(it.role, it.content) }
+        if (current.generating) return
+        val history = current.messages.map { StoredMessage(it.role, it.content) }
         startGeneration(display, modelText, history)
     }
 
@@ -340,6 +546,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val context = TextTools.retrieve(userText, docs.joinToString("\n\n") { it.text }, 3000)
         if (context.isBlank()) return userText
         return Prompts.docAnswer(userText, context)
+    }
+
+    private fun systemPrompt(): String {
+        val base = Prompts.system(_state.value.workMode)
+        val web = _state.value.webToolsEnabled
+        val phone = _state.value.phoneToolsEnabled
+        return if (web || phone) {
+            base + "\n\n" + ToolProtocol.PROMPT +
+                (if (web) "\n\n（联网查看网页已开启）" else "\n\n（联网查看网页已关闭）") +
+                (if (phone) "\n（手机操控已开启）" else "\n（手机操控已关闭）")
+        } else {
+            base
+        }
     }
 
     private fun startGeneration(
@@ -358,63 +577,99 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 status = null,
             )
         }
-
+        PhoneControl.reset()
+        sendJob?.cancel()
         sendJob = viewModelScope.launch {
-            val buffer = StringBuilder()
-            var lastFlush = 0L
             try {
-                primeIfNeeded(history)
-
-                var result = engine.generate(modelText, prefs.maxTokens, prefs.temperature) { piece ->
-                    buffer.append(piece)
-                    val now = System.currentTimeMillis()
-                    if (now - lastFlush > 80) {
-                        lastFlush = now
-                        updateAnswer(answerId, buffer.toString(), streaming = true)
-                    }
+                if (currentProvider() == null) {
+                    runLocal(answerId, modelText, history, allowRetry)
+                } else {
+                    runRemote(answerId, modelText, history)
                 }
-
-                if (result is GenerateResult.Failed && result.code == 2 && allowRetry) {
-                    // 上下文不足：压缩历史后重试一次
-                    val shorter = history.takeLast(4)
-                    _state.update { it.copy(status = "上下文已满，正在压缩历史后重试…") }
-                    buffer.clear()
-                    updateAnswer(answerId, "", streaming = true)
-                    primeWithRetry(shorter)
-                    result = engine.generate(modelText, prefs.maxTokens, prefs.temperature) { piece ->
-                        buffer.append(piece)
-                        val now = System.currentTimeMillis()
-                        if (now - lastFlush > 80) {
-                            lastFlush = now
-                            updateAnswer(answerId, buffer.toString(), streaming = true)
-                        }
-                    }
-                }
-
-                when (result) {
-                    GenerateResult.Success -> {
-                        val finalText = buffer.toString().ifBlank { "（没有生成内容）" }
-                        updateAnswer(answerId, finalText, streaming = false)
-                        _state.update { it.copy(generating = false, status = null) }
-                        persist()
-                    }
-                    is GenerateResult.Failed -> {
-                        val message = when (result.code) {
-                            2 -> "内容超出模型上下文，请新建对话或减少资料长度。"
-                            3 -> "推理失败，请尝试重新加载模型。"
-                            else -> "生成失败（错误码 ${result.code}）。"
-                        }
-                        updateAnswer(answerId, message, streaming = false)
-                        _state.update { it.copy(generating = false, error = message) }
-                    }
-                }
+            } catch (t: kotlinx.coroutines.CancellationException) {
+                throw t
             } catch (t: Throwable) {
                 updateAnswer(answerId, "生成中断：${t.message ?: "未知错误"}", streaming = false)
                 _state.update { it.copy(generating = false, error = t.message) }
             } finally {
+                QuickStopService.stop(getApplication())
+                _state.update { it.copy(toolRunning = false, status = null) }
                 sendJob = null
             }
         }
+    }
+
+    // ---------------- local engine ----------------
+
+    private suspend fun runLocal(
+        answerId: String,
+        modelText: String,
+        history: List<StoredMessage>,
+        allowRetry: Boolean,
+    ) {
+        primeIfNeeded(history)
+        val visible = StringBuilder()
+        var userText = modelText
+        var retryAllowed = allowRetry
+        for (round in 0..MAX_TOOL_ROUNDS) {
+            val buffer = StringBuilder()
+            var lastFlush = 0L
+            var result = engine.generate(userText, prefs.maxTokens, prefs.temperature) { piece ->
+                buffer.append(piece)
+                val now = System.currentTimeMillis()
+                if (now - lastFlush > 80) {
+                    lastFlush = now
+                    showProgress(answerId, visible.toString(), buffer.toString())
+                }
+            }
+
+            if (result is GenerateResult.Failed && result.code == 2 && retryAllowed) {
+                val shorter = history.takeLast(4)
+                _state.update { it.copy(status = "上下文已满，正在压缩历史后重试…") }
+                buffer.clear()
+                primeWithRetry(shorter)
+                retryAllowed = false
+                result = engine.generate(userText, prefs.maxTokens, prefs.temperature) { piece ->
+                    buffer.append(piece)
+                    val now = System.currentTimeMillis()
+                    if (now - lastFlush > 80) {
+                        lastFlush = now
+                        showProgress(answerId, visible.toString(), buffer.toString())
+                    }
+                }
+            }
+
+            if (result is GenerateResult.Failed) {
+                val message = when (result.code) {
+                    2 -> "内容超出模型上下文，请新建对话或减少资料长度。"
+                    3 -> "推理失败，请尝试重新加载模型。"
+                    else -> "生成失败（错误码 ${result.code}）。"
+                }
+                val text = (visible.toString() + ToolProtocol.strip(buffer.toString(), null)).trim()
+                updateAnswer(answerId, text.ifBlank { message }, streaming = false)
+                _state.update { it.copy(generating = false, error = message) }
+                return
+            }
+
+            val full = buffer.toString()
+            val call = ToolProtocol.parse(full)
+            visible.append(ToolProtocol.strip(full, call))
+            updateAnswer(answerId, visible.toString(), streaming = true)
+
+            if (call == null || PhoneControl.aborted || round == MAX_TOOL_ROUNDS) break
+
+            val resultText = executeTool(call, answerId)
+            if (resultText == null) break
+            visible.append("\n\n> ${ToolProtocol.describe(call)}：${resultText.take(300)}\n\n")
+            updateAnswer(answerId, visible.toString(), streaming = true)
+            userText = "工具「${call.name}」执行结果：\n$resultText\n\n请基于以上结果继续完成用户请求，不要再重复调用相同工具。"
+        }
+
+        val finalText = visible.toString().trim().ifBlank { "（没有生成内容）" } +
+            if (PhoneControl.aborted) "\n\n（已被紧急停止）" else ""
+        updateAnswer(answerId, finalText, streaming = false)
+        _state.update { it.copy(generating = false, status = null) }
+        persist()
     }
 
     private suspend fun primeIfNeeded(history: List<StoredMessage>) {
@@ -429,7 +684,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         var current = history
         for (attempt in 0..2) {
             val pairs = current.map { it.role to it.content }
-            val code = engine.prime(Prompts.system(_state.value.workMode), pairs)
+            val code = engine.prime(systemPrompt(), pairs)
             if (code == 0) return
             if (code == 2) {
                 current = when (attempt) {
@@ -441,6 +696,132 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 return
             }
         }
+    }
+
+    // ---------------- remote engine --------------
+
+    private suspend fun runRemote(
+        answerId: String,
+        modelText: String,
+        history: List<StoredMessage>,
+    ) {
+        val provider = currentProvider() ?: return
+        val config = prefs.config(provider)
+        if (!config.ready) {
+            updateAnswer(answerId, "请先在设置里填写 ${provider.label} 的 API Key", streaming = false)
+            _state.update { it.copy(generating = false) }
+            return
+        }
+
+        val messages = ArrayList<ChatMsg>()
+        messages += ChatMsg("system", systemPrompt())
+        history.forEach { messages += ChatMsg(it.role, it.content) }
+        messages += ChatMsg("user", modelText)
+
+        val visible = StringBuilder()
+        for (round in 0..MAX_TOOL_ROUNDS) {
+            val buffer = StringBuilder()
+            var lastFlush = 0L
+            val answer = try {
+                client.stream(
+                    RemoteRequest(
+                        baseUrl = config.baseUrl,
+                        apiKey = config.apiKey,
+                        model = config.model,
+                        messages = messages.toList(),
+                        temperature = prefs.temperature,
+                        maxTokens = prefs.maxTokens,
+                    )
+                ) { piece ->
+                    buffer.append(piece)
+                    val now = System.currentTimeMillis()
+                    if (now - lastFlush > 80) {
+                        lastFlush = now
+                        showProgress(answerId, visible.toString(), buffer.toString())
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (PhoneControl.aborted) break
+                val message = "请求失败：${e.message ?: "网络错误"}"
+                updateAnswer(answerId, (visible.toString() + message).trim(), streaming = false)
+                _state.update { it.copy(generating = false, error = message) }
+                return
+            }
+
+            val call = ToolProtocol.parse(answer)
+            visible.append(ToolProtocol.strip(answer, call))
+            updateAnswer(answerId, visible.toString(), streaming = true)
+
+            if (call == null || PhoneControl.aborted || round == MAX_TOOL_ROUNDS) break
+
+            val resultText = executeTool(call, answerId)
+            if (resultText == null) break
+            visible.append("\n\n> ${ToolProtocol.describe(call)}：${resultText.take(300)}\n\n")
+            updateAnswer(answerId, visible.toString(), streaming = true)
+
+            messages += ChatMsg("assistant", answer)
+            messages += ChatMsg(
+                "user",
+                "工具「${call.name}」执行结果：\n$resultText\n\n请基于以上结果继续完成用户请求，不要再重复调用相同工具。",
+            )
+        }
+
+        val finalText = visible.toString().trim().ifBlank { "（没有生成内容）" } +
+            if (PhoneControl.aborted) "\n\n（已被紧急停止）" else ""
+        updateAnswer(answerId, finalText, streaming = false)
+        _state.update { it.copy(generating = false, status = null) }
+        persist()
+    }
+
+    private fun showProgress(answerId: String, visible: String, buffer: String) {
+        val partial = ToolProtocol.strip(buffer, ToolProtocol.parse(buffer))
+        updateAnswer(answerId, (visible + partial).trimStart(), streaming = true)
+    }
+
+    /**
+     * 执行工具；返回 null 表示中止后续轮次。
+     */
+    private suspend fun executeTool(call: ToolCall, answerId: String): String? {
+        val app = getApplication<Application>()
+        val phoneAction = PhoneControl.isPhoneAction(call.name)
+        _state.update {
+            it.copy(
+                status = ToolProtocol.describe(call) + "…",
+                toolRunning = phoneAction,
+            )
+        }
+        if (phoneAction) {
+            if (!PhoneControl.serviceReady()) {
+                _state.update { it.copy(status = "无障碍服务未开启，无法操控手机") }
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(app, "请先在设置中开启无障碍服务", android.widget.Toast.LENGTH_LONG).show()
+                }
+                return "无障碍服务未开启，请用户在设置中开启“本地AI 辅助操作”后重试"
+            }
+            if (!PhoneControl.overlayAllowed(app)) {
+                _state.update { it.copy(status = "提示：未授予悬浮窗权限，紧急关闭按钮可能不显示") }
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(app, "建议在设置中授予悬浮窗权限，以便随时紧急关闭", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+            QuickStopService.start(app)
+        }
+        val result = withContext(Dispatchers.IO) {
+            ToolProtocol.execute(
+                app,
+                call,
+                webEnabled = _state.value.webToolsEnabled,
+                phoneEnabled = _state.value.phoneToolsEnabled,
+            )
+        }
+        if (phoneAction) {
+            QuickStopService.stop(app)
+            _state.update { it.copy(toolRunning = false) }
+        }
+        _state.update { it.copy(status = null) }
+        return result
     }
 
     private fun updateAnswer(id: String, text: String, streaming: Boolean) {
@@ -503,5 +884,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun contextUsage(): Pair<Int, Int> {
         if (!_state.value.modelLoaded) return 0 to 0
         return engine.contextUsed() to engine.contextSize()
+    }
+
+    companion object {
+        private const val MAX_TOOL_ROUNDS = 4
     }
 }
