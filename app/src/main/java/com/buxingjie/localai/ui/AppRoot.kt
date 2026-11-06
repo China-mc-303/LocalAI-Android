@@ -10,9 +10,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -62,6 +64,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     SETTINGS("设置", Icons.Outlined.Settings),
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun AppRoot(viewModel: ChatViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -107,23 +110,36 @@ fun AppRoot(viewModel: ChatViewModel = viewModel()) {
         wallpaperPath = state.wallpaperPath,
         wallpaperBlur = state.wallpaperBlur,
     ) {
+        // 键盘弹出时隐藏悬浮导航栏，并让输入框贴合键盘顶部
+        val imeVisible = WindowInsets.isImeVisible
+        val contentBottom by animateDpAsState(
+            targetValue = if (imeVisible) 0.dp else 96.dp,
+            label = "contentBottom",
+        )
         Scaffold(
             containerColor = Color.Transparent,
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
-                FloatingPillNavBar(
-                    currentPage = pagerState.currentPage,
-                    opacity = state.glassOpacity,
-                    onSelect = { goTab(it) },
-                    modifier = Modifier.navigationBarsPadding(),
-                )
+                if (!imeVisible) {
+                    FloatingPillNavBar(
+                        currentPage = pagerState.currentPage,
+                        opacity = state.glassOpacity,
+                        onSelect = { goTab(it) },
+                        modifier = Modifier.navigationBarsPadding(),
+                    )
+                }
             },
         ) { padding ->
             HorizontalPager(
                 state = pagerState,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding),
+                    .padding(
+                        start = padding.calculateLeftPadding(androidx.compose.ui.unit.LayoutDirection.Ltr),
+                        end = padding.calculateRightPadding(androidx.compose.ui.unit.LayoutDirection.Ltr),
+                        top = padding.calculateTopPadding(),
+                        bottom = contentBottom,
+                    ),
                 beyondViewportPageCount = 1,
             ) { page ->
                 when (Tab.entries[page]) {

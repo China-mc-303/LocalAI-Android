@@ -1227,13 +1227,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun updateAnswer(id: String, text: String, streaming: Boolean) {
+        val cleaned = cleanModelOutput(text)
         _state.update { current ->
             current.copy(
                 messages = current.messages.map { message ->
-                    if (message.id == id) message.copy(content = text, streaming = streaming) else message
+                    if (message.id == id) message.copy(content = cleaned, streaming = streaming) else message
                 }
             )
         }
+    }
+
+    /**
+     * 清洗本地模型输出：去掉 <think> 思考块、<answer> 标签，
+     * 防止混元/DeepSeek-R1 等模型的标签直接显示给用户。
+     */
+    private fun cleanModelOutput(raw: String): String {
+        var s = raw
+        // 已结束的思考块直接隐藏
+        s = s.replace(Regex("<think>.*?</think>", RegexOption.DOT_MATCHES_ALL), "")
+        // 正在生成的思考块显示提示，避免界面空白
+        s = s.replace(Regex("<think>.*$", RegexOption.DOT_MATCHES_ALL), "（正在思考…）")
+        // answer 标签只留正文
+        if (s.contains("<answer>")) s = s.substringAfter("<answer>")
+        if (s.contains("</answer>")) s = s.substringBefore("</answer>")
+        return s
     }
 
     private fun persist() {

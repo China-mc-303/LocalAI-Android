@@ -86,6 +86,28 @@ class ModelRepository(private val context: Context) {
             LocalModel(target, prettyName(target.name), target.length())
         }
 
+    /** GitHub 加速镜像，模型下载同样生效。 */
+    private val ghProxies = listOf(
+        "https://gh-proxy.com/",
+        "https://ghfast.top/",
+        "https://ghproxy.net/",
+        "https://gh.llkk.cc/",
+        "https://github.moeyy.xyz/",
+    )
+
+    /** 为每个原始地址生成候选列表：GitHub 地址优先走镜像，最后回退直连。 */
+    private fun candidatesOf(model: RemoteModel): List<String> {
+        val out = mutableListOf<String>()
+        for (url in listOf(model.url, model.fallbackUrl)) {
+            if (url.isBlank()) continue
+            if ("github.com" in url) {
+                ghProxies.forEach { out += it + url }
+            }
+            out += url
+        }
+        return out
+    }
+
     suspend fun download(model: RemoteModel, onProgress: (Long, Long) -> Unit): LocalModel =
         withContext(Dispatchers.IO) {
             val target = File(modelsDir, model.fileName)
@@ -94,23 +116,25 @@ class ModelRepository(private val context: Context) {
             }
             val temp = File(modelsDir, model.fileName + ".part")
 
+            // 每个下载源最多重试 3 次；断点续传，重试从已下载处继续，不浪费流量
             var lastError: Exception? = null
-            for (url in listOf(model.url, model.fallbackUrl)) {
-                try {
-                    downloadFrom(url, temp, onProgress)
-                    lastError = null
-                    break
-                } catch (e: Exception) {
-                    lastError = e
-                    if (e is kotlinx.coroutines.CancellationException) throw e
+            val candidates = candidatesOf(model)
+            for (url in candidates) {
+                repeat(3) { attempt ->
+                    try {
+                        downloadFrom(url, temp, onProgress)
+                        lastError = null
+                        verifyGguf(temp)
+                        if (target.exists()) target.delete()
+                        if (!temp.renameTo(target)) throw IOException("保存模型失败")
+                        return@withContext LocalModel(target, model.name, target.length())
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        lastError = e
+                    }
                 }
             }
-            if (lastError != null) throw lastError
-
-            verifyGguf(temp)
-            if (target.exists()) target.delete()
-            if (!temp.renameTo(target)) throw IOException("保存模型失败")
-            LocalModel(target, model.name, target.length())
+            throw lastError ?: IOException("下载失败：所有线路均不可用，请检查网络")
         }
 
     private suspend fun downloadFrom(url: String, temp: File, onProgress: (Long, Long) -> Unit) {

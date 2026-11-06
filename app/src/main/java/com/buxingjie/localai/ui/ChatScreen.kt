@@ -116,7 +116,7 @@ fun ChatScreen(
         if (granted) launchSpeech() else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
 
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().imePadding()) {
         ChatTopBar(
             state = state,
             onOpenModels = onOpenModels,
@@ -194,7 +194,6 @@ fun ChatScreen(
         Column(
             Modifier
                 .fillMaxWidth()
-                .imePadding()
                 .padding(horizontal = 10.dp, vertical = 8.dp)
         ) {
             if (!state.engineReady && !state.modelLoading) {
