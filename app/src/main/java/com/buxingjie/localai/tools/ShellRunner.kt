@@ -124,20 +124,17 @@ private class PersistentShell(dir: File, useShizuku: Boolean) {
     private var exitCode = 0
 
     init {
-        val started = if (useShizuku) {
-            ShizukuShell.newShell(dir)
-        } else {
-            ProcessBuilder("/system/bin/sh")
-                .apply {
-                    directory(dir)
-                    redirectErrorStream(true)
-                    environment()["LANG"] = "en_US.UTF-8"
-                    environment()["LC_ALL"] = "en_US.UTF-8"
-                    environment()["TMPDIR"] = "/data/local/tmp"
-                }
-                .start()
-        }
-        process = started ?: throw IOException("终端启动失败")
+        // Shizuku 失败时自动退回普通应用进程，保证终端一定可用
+        val shizukuProcess = if (useShizuku) ShizukuShell.newShell(dir) else null
+        process = shizukuProcess ?: ProcessBuilder("/system/bin/sh")
+            .apply {
+                directory(dir)
+                redirectErrorStream(true)
+                environment()["LANG"] = "en_US.UTF-8"
+                environment()["LC_ALL"] = "en_US.UTF-8"
+                environment()["TMPDIR"] = "/data/local/tmp"
+            }
+            .start()
         writer = process.outputStream.bufferedWriter(Charsets.UTF_8)
 
         Thread {
