@@ -40,25 +40,41 @@ object UpdateChecker {
     const val REPO = "China-mc-303/LocalAI-Android"
     private const val LATEST_URL = "https://api.github.com/repos/$REPO/releases/latest"
 
+    /** GitHub 加速镜像（参考 wenxi 项目），用于 API 与文件下载加速。 */
+    private val proxies = listOf(
+        "https://gh-proxy.com/",
+        "https://ghfast.top/",
+        "https://ghproxy.net/",
+    )
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
     }
 
     suspend fun latest(): UpdateInfo? = withContext(Dispatchers.IO) {
-        val connection = (URL(LATEST_URL).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 12_000
-            readTimeout = 12_000
+        // 先直连，失败后依次尝试加速镜像
+        val urls = listOf(LATEST_URL) + proxies.map { it + LATEST_URL }
+        for (url in urls) {
+            fetchLatest(url)?.let { return@withContext it }
+        }
+        null
+    }
+
+    private fun fetchLatest(url: String): UpdateInfo? {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 10_000
+            readTimeout = 10_000
             setRequestProperty("Accept", "application/vnd.github+json")
             setRequestProperty("User-Agent", "LocalAI-Android")
         }
-        try {
-            if (connection.responseCode != 200) return@withContext null
+        return try {
+            if (connection.responseCode != 200) return null
             val text = connection.inputStream.bufferedReader().use { it.readText() }
             val release = json.decodeFromString<GithubRelease>(text)
-            if (release.prerelease) return@withContext null
+            if (release.prerelease || release.tag_name.isBlank()) return null
             val apk = release.assets.firstOrNull { it.name.endsWith(".apk", ignoreCase = true) }
-                ?: return@withContext null
+                ?: return null
             UpdateInfo(
                 version = release.tag_name.trim().removePrefix("v").removePrefix("V"),
                 notes = release.body.trim(),
@@ -94,18 +110,48 @@ object UpdateChecker {
 
 object UpdateDownloader {
 
+    private val proxies = listOf(
+        "https://gh-proxy.com/",
+        "https://ghfast.top/",
+        "https://ghproxy.net/",
+    )
+
+    /** 低于该速度视为线路不佳，自动切换到下一个镜像。 */
+    private const val MIN_SPEED_BYTES_PER_SEC = 100 * 1024L
+    private const val SPEED_TEST_WINDOW_MS = 8_000L
+
     suspend fun download(
         url: String,
         target: File,
         onProgress: (received: Long, total: Long) -> Unit,
     ) = withContext(Dispatchers.IO) {
+        val candidates = proxies.map { it + url } + url
+        var lastError: Exception? = null
+        for (candidate in candidates) {
+            try {
+                downloadOnce(candidate, target, onProgress)
+                return@withContext
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                lastError = e
+                runCatching { target.delete() }
+            }
+        }
+        throw lastError ?: IOException("所有下载通道均不可用")
+    }
+
+    private fun downloadOnce(
+        url: String,
+        target: File,
+        onProgress: (received: Long, total: Long) -> Unit,
+    ) {
         var current = URL(url)
         var redirects = 0
         var connection: HttpURLConnection? = null
         while (true) {
             val conn = (current.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 20_000
-                readTimeout = 30_000
+                connectTimeout = 15_000
+                readTimeout = 20_000
                 instanceFollowRedirects = true
                 setRequestProperty("User-Agent", "LocalAI-Android")
             }
@@ -132,6 +178,7 @@ object UpdateDownloader {
             val total = download.contentLengthLong.takeIf { it > 0 } ?: 0L
             var received = 0L
             var lastNotify = 0L
+            val startTime = System.currentTimeMillis()
             download.inputStream.use { input ->
                 FileOutputStream(target).use { output ->
                     val buffer = ByteArray(64 * 1024)
@@ -140,9 +187,17 @@ object UpdateDownloader {
                         if (read <= 0) break
                         output.write(buffer, 0, read)
                         received += read
-                        if (received - lastNotify >= 512 * 1024) {
+                        if (received - lastNotify >= 256 * 1024) {
                             lastNotify = received
                             onProgress(received, total)
+                        }
+                        // 速度检测窗口：前 8 秒平均速度过慢则放弃该镜像
+                        val elapsed = System.currentTimeMillis() - startTime
+                        if (elapsed >= SPEED_TEST_WINDOW_MS &&
+                            elapsed < SPEED_TEST_WINDOW_MS + 30_000 &&
+                            received < MIN_SPEED_BYTES_PER_SEC * elapsed / 1000
+                        ) {
+                            throw IOException("当前线路速度过慢，正在切换加速通道…")
                         }
                     }
                     output.flush()

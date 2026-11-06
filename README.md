@@ -6,8 +6,8 @@
 
 | 文件 | 说明 |
 |---|---|
-| [LocalAI-v3.2.0.apk](https://github.com/China-mc-303/LocalAI-Android/releases/download/v3.2.0/LocalAI-v3.2.0.apk) | 安装包，Android 8.0+ / arm64-v8a |
-| [LocalAI-v3.2.0-source.zip](https://github.com/China-mc-303/LocalAI-Android/releases/download/v3.2.0/LocalAI-v3.2.0-source.zip) | 完整源码包（含 llama.cpp） |
+| [LocalAI-v3.2.1.apk](https://github.com/China-mc-303/LocalAI-Android/releases/download/v3.2.1/LocalAI-v3.2.1.apk) | 安装包，Android 8.0+ / arm64-v8a |
+| [LocalAI-v3.2.1-source.zip](https://github.com/China-mc-303/LocalAI-Android/releases/download/v3.2.1/LocalAI-v3.2.1-source.zip) | 完整源码包（含 llama.cpp） |
 
 ## 仓库结构
 
