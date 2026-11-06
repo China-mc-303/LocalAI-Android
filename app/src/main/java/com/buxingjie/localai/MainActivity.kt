@@ -21,6 +21,7 @@ class MainActivity : ComponentActivity() {
                 primary = state.primaryColor,
                 accent = state.accentColor,
                 opacity = state.glassOpacity,
+                darkTheme = state.themeMode != "light",
             ) {
                 AppRoot(viewModel = viewModel)
             }

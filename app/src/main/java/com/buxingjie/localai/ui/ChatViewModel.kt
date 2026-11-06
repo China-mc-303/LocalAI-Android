@@ -122,6 +122,7 @@ data class ChatUiState(
     val glassOpacity: Float = 0.16f,
     val wallpaperPath: String? = null,
     val wallpaperBlur: Int = 0,
+    val themeMode: String = "dark",
 )
 
 private data class EngineSnapshot(
@@ -173,6 +174,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             glassOpacity = prefs.glassOpacity,
             wallpaperPath = prefs.wallpaperPath,
             wallpaperBlur = prefs.wallpaperBlur,
+            themeMode = prefs.themeMode,
         )
     )
     val state = _state.asStateFlow()
@@ -1285,6 +1287,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun setWallpaperBlur(value: Int) {
         prefs.wallpaperBlur = value
         _state.update { it.copy(wallpaperBlur = value) }
+    }
+
+    fun setThemeMode(mode: String) {
+        val valid = if (mode == "light") "light" else "dark"
+        prefs.themeMode = valid
+        _state.update { it.copy(themeMode = valid) }
     }
 
     private fun reloadIfLoaded() {

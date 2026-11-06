@@ -6,6 +6,7 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -374,39 +377,67 @@ fun SettingsScreen(
         SettingCard {
             Text("个性化", style = MaterialTheme.typography.titleSmall)
             Text(
-                "自定义应用主题色、强调色、玻璃透明度与壁纸",
+                "自定义主题模式、主题色、强调色、玻璃透明度与壁纸",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("主题模式", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                FilterChip(
+                    selected = state.themeMode != "light",
+                    onClick = { viewModel.setThemeMode("dark") },
+                    label = { Text("黑夜") },
+                )
+                Spacer(Modifier.width(8.dp))
+                FilterChip(
+                    selected = state.themeMode == "light",
+                    onClick = { viewModel.setThemeMode("light") },
+                    label = { Text("白天") },
+                )
+            }
+            var showPrimaryPicker by remember { mutableStateOf(false) }
+            var showAccentPicker by remember { mutableStateOf(false) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("主题色", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                listOf(
-                    0xFF2DD4BF, 0xFF7DD3FC, 0xFF8A7DD3, 0xFFFF8A80, 0xFFFFB74D, 0xFF81C784
-                ).forEach { color ->
-                    Box(
-                        Modifier
-                            .padding(horizontal = 3.dp)
-                            .background(Color(color), RoundedCornerShape(6.dp))
-                            .height(24.dp)
-                            .width(24.dp)
-                            .clickable { viewModel.setPrimaryColor(color) }
-                    )
-                }
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(state.primaryColor))
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+                        .clickable { showPrimaryPicker = true }
+                )
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = { showPrimaryPicker = true }) { Text("选择颜色") }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("强调色", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                listOf(
-                    0xFF7DD3FC, 0xFF2DD4BF, 0xFF8A7DD3, 0xFFFF8A80, 0xFFFFB74D, 0xFF81C784
-                ).forEach { color ->
-                    Box(
-                        Modifier
-                            .padding(horizontal = 3.dp)
-                            .background(Color(color), RoundedCornerShape(6.dp))
-                            .height(24.dp)
-                            .width(24.dp)
-                            .clickable { viewModel.setAccentColor(color) }
-                    )
-                }
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(state.accentColor))
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+                        .clickable { showAccentPicker = true }
+                )
+                Spacer(Modifier.width(8.dp))
+                TextButton(onClick = { showAccentPicker = true }) { Text("选择颜色") }
+            }
+            if (showPrimaryPicker) {
+                ColorPickerDialog(
+                    title = "选择主题色",
+                    initialColor = state.primaryColor,
+                    onConfirm = { viewModel.setPrimaryColor(it); showPrimaryPicker = false },
+                    onDismiss = { showPrimaryPicker = false },
+                )
+            }
+            if (showAccentPicker) {
+                ColorPickerDialog(
+                    title = "选择强调色",
+                    initialColor = state.accentColor,
+                    onConfirm = { viewModel.setAccentColor(it); showAccentPicker = false },
+                    onDismiss = { showAccentPicker = false },
+                )
             }
             SliderSetting(
                 title = "玻璃透明度",

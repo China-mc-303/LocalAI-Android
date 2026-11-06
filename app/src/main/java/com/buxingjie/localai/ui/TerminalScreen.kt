@@ -192,7 +192,7 @@ private fun TerminalConsole(state: ChatUiState, viewModel: ChatViewModel) {
                 singleLine = true,
                 shape = RoundedCornerShape(20.dp),
                 textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, keyboardType = KeyboardType.Ascii),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, keyboardType = KeyboardType.Text),
                 keyboardActions = KeyboardActions(onDone = { submit() }),
             )
             Spacer(Modifier.width(8.dp))

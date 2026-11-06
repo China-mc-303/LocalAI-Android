@@ -83,6 +83,11 @@ class Prefs(context: Context) {
         get() = sp.getInt("wallpaper_blur", 0)
         set(value) = sp.edit().putInt("wallpaper_blur", value).apply()
 
+    /** 主题模式：dark / light */
+    var themeMode: String
+        get() = sp.getString("theme_mode", "dark") ?: "dark"
+        set(value) = sp.edit().putString("theme_mode", value).apply()
+
     fun apiKey(provider: AiProvider): String =
         sp.getString("p_${provider.id}_key", "") ?: ""
 

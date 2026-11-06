@@ -1,8 +1,24 @@
 package com.buxingjie.localai.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.FileDownload
@@ -10,8 +26,7 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -19,17 +34,20 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 
 private enum class Tab(val label: String, val icon: ImageVector) {
     CHAT("对话", Icons.Outlined.ChatBubbleOutline),
@@ -42,9 +60,10 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 @Composable
 fun AppRoot(viewModel: ChatViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    var tabIndex by rememberSaveable { mutableIntStateOf(0) }
+    val pagerState = rememberPagerState(pageCount = { Tab.entries.size })
     var showTerminal by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(state.error) {
         val message = state.error
@@ -54,12 +73,19 @@ fun AppRoot(viewModel: ChatViewModel = viewModel()) {
         }
     }
 
-    LaunchedEffect(tabIndex) {
-        viewModel.refreshSystemState()
-        when (tabIndex) {
-            1 -> viewModel.refreshWorkspace()
-            3 -> viewModel.refreshModels()
+    // 滑动到新页面时刷新对应数据
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }.collect { page ->
+            viewModel.refreshSystemState()
+            when (page) {
+                1 -> viewModel.refreshWorkspace()
+                3 -> viewModel.refreshModels()
+            }
         }
+    }
+
+    fun goTab(index: Int) {
+        scope.launch { pagerState.animateScrollToPage(index) }
     }
 
     LiquidBackground(
@@ -73,37 +99,32 @@ fun AppRoot(viewModel: ChatViewModel = viewModel()) {
             containerColor = Color.Transparent,
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
-                NavigationBar(
-                    containerColor = Color.White.copy(alpha = state.glassOpacity * 0.6f),
-                    tonalElevation = 0.dp,
-                ) {
-                    Tab.entries.forEachIndexed { index, tab ->
-                        NavigationBarItem(
-                            selected = tabIndex == index,
-                            onClick = { tabIndex = index },
-                            icon = { Icon(tab.icon, contentDescription = tab.label) },
-                            label = { Text(tab.label) },
-                        )
-                    }
-                }
+                FloatingPillNavBar(
+                    currentPage = pagerState.currentPage,
+                    opacity = state.glassOpacity,
+                    onSelect = { goTab(it) },
+                    modifier = Modifier.navigationBarsPadding(),
+                )
             },
         ) { padding ->
-            Box(
-                Modifier
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding)
-            ) {
-                when (Tab.entries[tabIndex]) {
+                    .padding(padding),
+                beyondViewportPageCount = 1,
+            ) { page ->
+                when (Tab.entries[page]) {
                     Tab.CHAT -> ChatScreen(
                         state = state,
                         viewModel = viewModel,
-                        onOpenModels = { tabIndex = if (state.engineId == "local") 3 else 4 },
+                        onOpenModels = { goTab(if (state.engineId == "local") 3 else 4) },
                         onOpenTerminal = { showTerminal = true },
                     )
                     Tab.FILES -> FilesScreen(
                         state = state,
                         viewModel = viewModel,
-                        onOpenChat = { tabIndex = 0 },
+                        onOpenChat = { goTab(0) },
                     )
                     Tab.DOWNLOADS -> DownloadsScreen(
                         state = state,
@@ -116,7 +137,7 @@ fun AppRoot(viewModel: ChatViewModel = viewModel()) {
                     Tab.SETTINGS -> SettingsScreen(
                         state = state,
                         viewModel = viewModel,
-                        onOpenModels = { tabIndex = 3 },
+                        onOpenModels = { goTab(3) },
                     )
                 }
             }
@@ -138,5 +159,76 @@ fun AppRoot(viewModel: ChatViewModel = viewModel()) {
             onInstall = { viewModel.installUpdate() },
             onDismiss = { viewModel.dismissUpdate() },
         )
+    }
+}
+
+/** 图2 风格：悬浮圆角胶囊导航栏，选中项带高亮胶囊底。 */
+@Composable
+private fun FloatingPillNavBar(
+    currentPage: Int,
+    opacity: Float,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        GlassPanel(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(30.dp),
+            opacity = (opacity * 1.6f).coerceAtMost(0.6f),
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Tab.entries.forEachIndexed { index, tab ->
+                    val selected = currentPage == index
+                    val iconTint by animateColorAsState(
+                        if (selected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        label = "tint",
+                    )
+                    val pillAlpha by animateColorAsState(
+                        if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+                        else Color.Transparent,
+                        label = "pill",
+                    )
+                    val itemHeight by animateDpAsState(
+                        if (selected) 40.dp else 36.dp,
+                        animationSpec = spring(dampingRatio = 0.7f),
+                        label = "h",
+                    )
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .height(itemHeight)
+                            .clip(CircleShape)
+                            .background(pillAlpha)
+                            .clickable { onSelect(index) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                tab.icon,
+                                contentDescription = tab.label,
+                                tint = iconTint,
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Text(
+                                tab.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = iconTint,
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }

@@ -45,6 +45,8 @@ object UpdateChecker {
         "https://gh-proxy.com/",
         "https://ghfast.top/",
         "https://ghproxy.net/",
+        "https://gh.llkk.cc/",
+        "https://github.moeyy.xyz/",
     )
 
     private val json = Json {
@@ -114,6 +116,8 @@ object UpdateDownloader {
         "https://gh-proxy.com/",
         "https://ghfast.top/",
         "https://ghproxy.net/",
+        "https://gh.llkk.cc/",
+        "https://github.moeyy.xyz/",
     )
 
     /** 低于该速度视为线路不佳，自动切换到下一个镜像。 */

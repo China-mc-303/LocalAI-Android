@@ -34,7 +34,7 @@ class DocumentParser(private val context: Context) {
     /** 列出 zip 压缩包内的文件。 */
     suspend fun listArchive(file: File): List<DocEntry> = withContext(Dispatchers.IO) {
         if (!file.name.lowercase().endsWith(".zip")) throw IOException("暂只支持查看 zip 压缩包")
-        ZipFile(file).use { zip ->
+        withZip(file) { zip ->
             zip.entries().asSequence()
                 .filter { !it.isDirectory }
                 .take(300)
@@ -45,7 +45,7 @@ class DocumentParser(private val context: Context) {
 
     /** 读取 zip 内某个文件的可读内容。 */
     suspend fun readArchiveEntry(file: File, entryName: String): String = withContext(Dispatchers.IO) {
-        ZipFile(file).use { zip ->
+        withZip(file) { zip ->
             val entry = zip.getEntry(entryName) ?: throw IOException("压缩包里没有 $entryName")
             if (entry.size > MAX_FILE_BYTES) throw IOException("该文件超过 80MB")
             val bytes = zip.getInputStream(entry).use { it.readBytes() }
@@ -62,6 +62,18 @@ class DocumentParser(private val context: Context) {
                     decodeText(bytes).take(MAX_CHARS_PER_FILE)
                 }
             }
+        }
+    }
+
+    /**
+     * 先用 UTF-8 打开 zip；Windows 打包的 zip 常用 GBK 存中文文件名，
+     * 遇到乱码异常时用 GB18030 重试。
+     */
+    private fun <T> withZip(file: File, block: (ZipFile) -> T): T {
+        try {
+            ZipFile(file, Charsets.UTF_8).use { return block(it) }
+        } catch (e: IllegalArgumentException) {
+            ZipFile(file, charset("GB18030")).use { return block(it) }
         }
     }
 

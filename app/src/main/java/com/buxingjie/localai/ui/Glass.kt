@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -21,9 +22,13 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 
 val GlassBorder = Color(0x30FFFFFF)
+val GlassBorderLight = Color(0x33000000)
 val GlassFillTop = Color(0x22FFFFFF)
 val GlassFillBottom = Color(0x0AFFFFFF)
 val GlassTint = Color(0x14FFFFFF)
+
+/** 白天模式时玻璃卡片改用白色底 + 深色描边。 */
+val LocalGlassLight = compositionLocalOf { false }
 
 /** 液态玻璃背景：支持自定义主题色、强调色、透明度与壁纸。 */
 @Composable
@@ -34,16 +39,18 @@ fun LiquidBackground(
     opacity: Float = 0.16f,
     wallpaperPath: String? = null,
     wallpaperBlur: Int = 0,
+    light: Boolean = LocalGlassLight.current,
     content: @Composable BoxScope.() -> Unit,
 ) {
+    val baseGradient = if (light) {
+        listOf(Color(0xFFE8EEF5), Color(0xFFF4F7FB), Color(0xFFE3EBF3))
+    } else {
+        listOf(Color(0xFF05090E), Color(0xFF0B1822), Color(0xFF081019))
+    }
     Box(
         modifier
             .fillMaxSize()
-            .background(
-                Brush.linearGradient(
-                    listOf(Color(0xFF05090E), Color(0xFF0B1822), Color(0xFF081019)),
-                )
-            )
+            .background(Brush.linearGradient(baseGradient))
     ) {
         // 壁纸层
         if (!wallpaperPath.isNullOrBlank()) {
@@ -109,20 +116,19 @@ fun GlassPanel(
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(22.dp),
     opacity: Float = 0.16f,
+    light: Boolean = LocalGlassLight.current,
     content: @Composable BoxScope.() -> Unit,
 ) {
+    val fillTop = if (light) Color.White.copy(alpha = (opacity * 2.4f + 0.3f).coerceAtMost(0.85f))
+    else Color.White.copy(alpha = opacity)
+    val fillBottom = if (light) Color.White.copy(alpha = (opacity * 1.6f + 0.2f).coerceAtMost(0.7f))
+    else Color.White.copy(alpha = opacity * 0.4f)
+    val border = if (light) GlassBorderLight else GlassBorder
     Box(
         modifier
             .clip(shape)
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        Color.White.copy(alpha = opacity),
-                        Color.White.copy(alpha = opacity * 0.4f),
-                    )
-                )
-            )
-            .border(1.dp, GlassBorder, shape)
+            .background(Brush.verticalGradient(listOf(fillTop, fillBottom)))
+            .border(1.dp, border, shape)
     ) {
         content()
     }

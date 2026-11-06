@@ -27,11 +27,15 @@ object ShellRunner {
 
     suspend fun run(command: String, workDir: String): ShellResult = withContext(Dispatchers.IO) {
         val dir = File(workDir)
-        val target = if (dir.isDirectory && dir.canExecute()) dir else File("/")
+        val target = if (dir.isDirectory) dir else File("/")
         val process = ProcessBuilder("/system/bin/sh", "-c", command)
             .apply {
                 directory(target)
                 redirectErrorStream(true)
+                // 让 ls/cat 等命令正确处理中文文件名
+                environment()["LANG"] = "en_US.UTF-8"
+                environment()["LC_ALL"] = "en_US.UTF-8"
+                environment()["TMPDIR"] = System.getProperty("java.io.tmpdir") ?: "/data/local/tmp"
             }
             .start()
 
