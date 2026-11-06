@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
@@ -42,6 +44,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -51,6 +55,7 @@ import kotlinx.coroutines.launch
 
 private enum class Tab(val label: String, val icon: ImageVector) {
     CHAT("对话", Icons.Outlined.ChatBubbleOutline),
+    SQUARE("广场", Icons.Outlined.Forum),
     FILES("文件", Icons.Outlined.FolderOpen),
     DOWNLOADS("下载", Icons.Outlined.FileDownload),
     MODELS("模型", Icons.Outlined.Memory),
@@ -62,8 +67,14 @@ fun AppRoot(viewModel: ChatViewModel = viewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val pagerState = rememberPagerState(pageCount = { Tab.entries.size })
     var showTerminal by remember { mutableStateOf(false) }
+    var showSplash by remember { mutableStateOf(true) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(2200)
+        showSplash = false
+    }
 
     LaunchedEffect(state.error) {
         val message = state.error
@@ -78,8 +89,9 @@ fun AppRoot(viewModel: ChatViewModel = viewModel()) {
         snapshotFlow { pagerState.settledPage }.collect { page ->
             viewModel.refreshSystemState()
             when (page) {
-                1 -> viewModel.refreshWorkspace()
-                3 -> viewModel.refreshModels()
+                1 -> viewModel.refreshPublic()
+                2 -> viewModel.refreshWorkspace()
+                4 -> viewModel.refreshModels()
             }
         }
     }
@@ -118,8 +130,12 @@ fun AppRoot(viewModel: ChatViewModel = viewModel()) {
                     Tab.CHAT -> ChatScreen(
                         state = state,
                         viewModel = viewModel,
-                        onOpenModels = { goTab(if (state.engineId == "local") 3 else 4) },
+                        onOpenModels = { goTab(if (state.engineId == "local") 4 else 5) },
                         onOpenTerminal = { showTerminal = true },
+                    )
+                    Tab.SQUARE -> PublicChatScreen(
+                        state = state,
+                        viewModel = viewModel,
                     )
                     Tab.FILES -> FilesScreen(
                         state = state,
@@ -137,7 +153,7 @@ fun AppRoot(viewModel: ChatViewModel = viewModel()) {
                     Tab.SETTINGS -> SettingsScreen(
                         state = state,
                         viewModel = viewModel,
-                        onOpenModels = { goTab(3) },
+                        onOpenModels = { goTab(4) },
                     )
                 }
             }
@@ -159,6 +175,80 @@ fun AppRoot(viewModel: ChatViewModel = viewModel()) {
             onInstall = { viewModel.installUpdate() },
             onDismiss = { viewModel.dismissUpdate() },
         )
+    }
+
+    SplashOverlay(
+        visible = showSplash,
+        primaryColor = Color(state.primaryColor),
+        accentColor = Color(state.accentColor),
+    )
+}
+
+/** 进入应用时的特效画面：光斑 + Logo 弹性缩放 + 淡出。 */
+@Composable
+private fun SplashOverlay(visible: Boolean, primaryColor: Color, accentColor: Color) {
+    androidx.compose.animation.AnimatedVisibility(
+        visible = visible,
+        exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(500)) +
+            androidx.compose.animation.scaleOut(
+                androidx.compose.animation.core.tween(500),
+                targetScale = 1.15f,
+            ),
+    ) {
+        val scale = remember { androidx.compose.animation.core.Animatable(0.4f) }
+        val glow = remember { androidx.compose.animation.core.Animatable(0f) }
+        LaunchedEffect(Unit) {
+            scale.animateTo(
+                1f,
+                androidx.compose.animation.core.spring(
+                    dampingRatio = 0.45f,
+                    stiffness = 200f,
+                ),
+            )
+        }
+        LaunchedEffect(Unit) {
+            glow.animateTo(1f, androidx.compose.animation.core.tween(1200))
+        }
+        LiquidBackground(
+            primaryColor = primaryColor,
+            accentColor = accentColor,
+            opacity = 0.3f,
+        ) {
+            Column(
+                Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Box(
+                    Modifier
+                        .size(96.dp)
+                        .scale(scale.value)
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(
+                            Brush.linearGradient(listOf(primaryColor, accentColor))
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "AI",
+                        style = MaterialTheme.typography.displaySmall,
+                        color = Color.White,
+                    )
+                }
+                Spacer(Modifier.height(20.dp))
+                Text(
+                    "本地AI",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f + glow.value * 0.6f),
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "步行街工作室",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = glow.value),
+                )
+            }
+        }
     }
 }
 

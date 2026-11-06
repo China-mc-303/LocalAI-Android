@@ -123,6 +123,9 @@ data class ChatUiState(
     val wallpaperPath: String? = null,
     val wallpaperBlur: Int = 0,
     val themeMode: String = "dark",
+    val publicMessages: List<com.buxingjie.localai.net.PublicMessage> = emptyList(),
+    val publicBusy: Boolean = false,
+    val publicName: String = "",
 )
 
 private data class EngineSnapshot(
@@ -175,6 +178,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             wallpaperPath = prefs.wallpaperPath,
             wallpaperBlur = prefs.wallpaperBlur,
             themeMode = prefs.themeMode,
+            publicName = prefs.publicName,
         )
     )
     val state = _state.asStateFlow()
@@ -1084,7 +1088,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         modelText: String,
         history: List<StoredMessage>,
     ) {
-        val provider = currentProvider() ?: return
+        val provider = currentProvider()
+        if (provider == null) {
+            // 引擎配置异常时兜底走本地，避免“选在线却悄悄没反应”
+            runLocal(answerId, modelText, history, allowRetry = true)
+            return
+        }
         val config = prefs.config(provider)
         if (!config.ready) {
             updateAnswer(answerId, "请先在设置里填写 ${provider.label} 的 API Key", streaming = false)
@@ -1293,6 +1302,39 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val valid = if (mode == "light") "light" else "dark"
         prefs.themeMode = valid
         _state.update { it.copy(themeMode = valid) }
+    }
+
+    // ---------------- public square ----------------
+
+    fun refreshPublic() {
+        if (_state.value.publicBusy) return
+        viewModelScope.launch {
+            _state.update { it.copy(publicBusy = true) }
+            val list = com.buxingjie.localai.net.PublicChat.fetch()
+            _state.update { it.copy(publicBusy = false, publicMessages = list) }
+        }
+    }
+
+    fun sendPublic(text: String) {
+        val clean = text.trim()
+        if (clean.isEmpty()) return
+        viewModelScope.launch {
+            _state.update { it.copy(publicBusy = true) }
+            val ok = com.buxingjie.localai.net.PublicChat.send(_state.value.publicName, clean)
+            val list = com.buxingjie.localai.net.PublicChat.fetch()
+            _state.update {
+                it.copy(
+                    publicBusy = false,
+                    publicMessages = list,
+                    error = if (ok) null else "发送失败，请检查网络后重试",
+                )
+            }
+        }
+    }
+
+    fun setPublicName(name: String) {
+        prefs.publicName = name
+        _state.update { it.copy(publicName = prefs.publicName) }
     }
 
     private fun reloadIfLoaded() {

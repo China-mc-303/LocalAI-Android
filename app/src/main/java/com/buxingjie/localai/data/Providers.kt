@@ -69,7 +69,8 @@ enum class AiProvider(
     ;
 
     companion object {
-        fun fromId(id: String?): AiProvider? = entries.firstOrNull { it.id == id }
+        fun fromId(id: String?): AiProvider? =
+            entries.firstOrNull { it.id == id?.trim()?.lowercase() }
     }
 }
 
@@ -79,6 +80,8 @@ data class RemoteEngineConfig(
     val model: String,
     val apiKey: String,
 ) {
+    /** 自定义渠道允许不填 Key；官方渠道必须填。 */
     val ready: Boolean
-        get() = baseUrl.isNotBlank() && model.isNotBlank() && apiKey.isNotBlank()
+        get() = baseUrl.isNotBlank() && model.isNotBlank() &&
+            (apiKey.isNotBlank() || provider == AiProvider.CUSTOM)
 }

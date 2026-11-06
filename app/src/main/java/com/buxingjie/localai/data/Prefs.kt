@@ -88,6 +88,15 @@ class Prefs(context: Context) {
         get() = sp.getString("theme_mode", "dark") ?: "dark"
         set(value) = sp.edit().putString("theme_mode", value).apply()
 
+    /** 公共聊天室昵称 */
+    var publicName: String
+        get() = sp.getString("public_name", null) ?: run {
+            val generated = "用户" + (1000 + (Math.random() * 9000).toInt())
+            sp.edit().putString("public_name", generated).apply()
+            generated
+        }
+        set(value) = sp.edit().putString("public_name", value.trim().ifBlank { "匿名" }).apply()
+
     fun apiKey(provider: AiProvider): String =
         sp.getString("p_${provider.id}_key", "") ?: ""
 
@@ -111,7 +120,12 @@ class Prefs(context: Context) {
         sp.edit().putString("p_${provider.id}_model", value.trim()).apply()
 
     fun config(provider: AiProvider): RemoteEngineConfig =
-        RemoteEngineConfig(provider, baseUrl(provider), modelName(provider), apiKey(provider))
+        RemoteEngineConfig(
+            provider,
+            baseUrl(provider).trim(),
+            modelName(provider).trim(),
+            apiKey(provider).trim(),
+        )
 
     companion object {
         fun defaultThreads(): Int {
