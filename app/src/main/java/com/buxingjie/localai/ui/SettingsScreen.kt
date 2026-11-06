@@ -19,9 +19,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -48,6 +50,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.buxingjie.localai.BuildConfig
 import com.buxingjie.localai.data.AiProvider
+import com.buxingjie.localai.data.Changelog
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -61,6 +64,7 @@ fun SettingsScreen(
     val maxThreads = Runtime.getRuntime().availableProcessors().coerceAtLeast(4)
     val provider = AiProvider.fromId(state.engineId)
     var dirInput by remember { mutableStateOf(state.workingDir) }
+    var showChangelog by remember { mutableStateOf(false) }
     LaunchedEffect(state.workingDir) { dirInput = state.workingDir }
     Column(
         Modifier
@@ -144,6 +148,24 @@ fun SettingsScreen(
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
                 )
+                Row(
+                    Modifier.padding(top = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = { viewModel.testRemoteConnection() },
+                        enabled = !state.testingRemote,
+                    ) {
+                        Text(if (state.testingRemote) "测试中…" else "测试连接")
+                    }
+                    Text(
+                        "会真实发送一次请求，验证地址、Key 和模型名是否可用",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
 
@@ -240,6 +262,59 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+
+        SettingCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Shizuku 权限", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "授权后终端与 AI 的 shell 命令以 shell 身份运行，可访问更多系统目录；不授权也能正常使用应用专属目录",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    when {
+                        state.shizukuGranted -> "已授权"
+                        state.shizukuAvailable -> "待授权"
+                        else -> "未检测到"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (state.shizukuGranted) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                when {
+                    state.shizukuGranted -> "当前终端身份：${state.shizukuUid}"
+                    state.shizukuAvailable -> "已检测到 Shizuku 服务，点右侧按钮请求权限"
+                    else -> "未检测到 Shizuku。需要先安装 Shizuku 并启动服务，可点右侧去安装或启动"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            Row(
+                Modifier.padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        if (state.shizukuGranted) viewModel.openShizukuManager()
+                        else viewModel.requestShizukuPermission()
+                    },
+                ) {
+                    Text(
+                        when {
+                            state.shizukuGranted -> "打开 Shizuku"
+                            state.shizukuAvailable -> "请求授权"
+                            else -> "去安装 Shizuku"
+                        }
+                    )
+                }
+                OutlinedButton(onClick = { viewModel.refreshSystemState() }) { Text("刷新状态") }
+            }
         }
 
         SettingCard {
@@ -362,14 +437,19 @@ fun SettingsScreen(
                     Text(if (state.updateChecking) "检查中…" else "检查更新")
                 }
             }
-            if (state.updateInfo != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                Modifier.padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButton(onClick = { showChangelog = true }) { Text("更新说明") }
+                if (state.updateInfo != null) {
                     OutlinedButton(onClick = { viewModel.showUpdateDialog() }) {
-                        Text(if (state.updateApkPath != null) "查看安装包" else "查看更新")
+                        Text(if (state.updateApkPath != null) "查看安装包" else "查看新版本")
                     }
-                    if (state.updateApkPath != null) {
-                        OutlinedButton(onClick = { viewModel.installUpdate() }) { Text("立即安装") }
-                    }
+                }
+                if (state.updateApkPath != null) {
+                    OutlinedButton(onClick = { viewModel.installUpdate() }) { Text("立即安装") }
                 }
             }
         }
@@ -502,6 +582,30 @@ fun SettingsScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 24.dp),
         )
+
+        if (showChangelog) {
+            val remoteNotes = state.updateInfo?.notes?.takeIf { it.isNotBlank() }
+            AlertDialog(
+                onDismissRequest = { showChangelog = false },
+                title = { Text("更新说明") },
+                text = {
+                    Column(
+                        Modifier
+                            .heightIn(max = 420.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text(
+                            if (remoteNotes != null) remoteNotes else Changelog.currentText(),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showChangelog = false }) { Text("知道了") }
+                },
+            )
+        }
     }
 }
 

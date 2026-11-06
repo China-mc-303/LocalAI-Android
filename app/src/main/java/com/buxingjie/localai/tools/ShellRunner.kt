@@ -1,9 +1,12 @@
 package com.buxingjie.localai.tools
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.BufferedWriter
 import java.io.File
-import java.util.concurrent.TimeUnit
+import java.io.IOException
 
 data class WorkspaceFile(
     val name: String,
@@ -15,59 +18,67 @@ data class WorkspaceFile(
 data class ShellResult(
     val ok: Boolean,
     val output: String,
+    val exitCode: Int = if (ok) 0 else 1,
 )
 
 /**
- * 在用户设置的工作目录里执行 shell 命令，供终端和 AI 使用。
+ * 电脑 CMD 风格的常驻终端：同一个 sh 进程持续使用，
+ * 所以 cd 会保持目录、环境变量也会保留。授权 Shizuku 后自动切换成 shell 身份。
  */
 object ShellRunner {
 
-    private const val MAX_OUTPUT = 4000
-    private const val TIMEOUT_SECONDS = 15L
+    private const val MAX_OUTPUT = 8000
+    private const val TIMEOUT_MS = 20_000L
 
-    suspend fun run(command: String, workDir: String): ShellResult = withContext(Dispatchers.IO) {
-        val dir = File(workDir)
-        val target = if (dir.isDirectory) dir else File("/")
-        val process = ProcessBuilder("/system/bin/sh", "-c", command)
-            .apply {
-                directory(target)
-                redirectErrorStream(true)
-                // 让 ls/cat 等命令正确处理中文文件名
-                environment()["LANG"] = "en_US.UTF-8"
-                environment()["LC_ALL"] = "en_US.UTF-8"
-                environment()["TMPDIR"] = System.getProperty("java.io.tmpdir") ?: "/data/local/tmp"
-            }
-            .start()
+    private val mutex = Mutex()
+    private var session: PersistentShell? = null
+    private var sessionDir: String = ""
+    private var sessionShizuku: Boolean = false
 
-        val output = StringBuilder()
-        val reader = Thread {
-            runCatching {
-                process.inputStream.bufferedReader().forEachLine { line ->
-                    if (output.length < MAX_OUTPUT) output.appendLine(line)
-                }
-            }
-        }
-        reader.isDaemon = true
-        reader.start()
+    @Volatile
+    private var cwd: String = ""
 
-        val finished = process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        if (!finished) {
-            process.destroyForcibly()
-            reader.join(1000)
-            ShellResult(false, buildTimeout(output, workDir))
-        } else {
-            reader.join(1500)
-            val text = output.toString().trim().ifBlank { "（命令没有输出）" }
-            ShellResult(process.exitValue() == 0, text.take(MAX_OUTPUT) + truncatedHint(output))
-        }
+    /** 终端提示符显示的当前目录。 */
+    fun currentDir(workDir: String): String {
+        val current = cwd
+        return if (current.isNotBlank() && File(current).isDirectory) current else workDir
     }
 
-    private fun buildTimeout(output: StringBuilder, workDir: String): String =
-        "命令执行超过 ${TIMEOUT_SECONDS} 秒，已终止。\n工作目录：$workDir" +
-            if (output.isNotBlank()) "\n\n已产生输出：\n${output.toString().take(MAX_OUTPUT)}" else ""
+    /** 关闭常驻终端，下次命令会重新启动。 */
+    fun reset() {
+        runCatching { session?.close() }
+        session = null
+        cwd = ""
+    }
 
-    private fun truncatedHint(output: StringBuilder): String =
-        if (output.length >= MAX_OUTPUT) "\n…（输出过长，已截断）" else ""
+    suspend fun run(command: String, workDir: String): ShellResult = mutex.withLock {
+        withContext(Dispatchers.IO) {
+            val dir = File(workDir).takeIf { it.isDirectory } ?: File("/")
+            val shizuku = ShizukuShell.granted()
+            if (session == null || sessionDir != dir.absolutePath || sessionShizuku != shizuku) {
+                reset()
+                session = runCatching { PersistentShell(dir, shizuku) }.getOrNull()
+                sessionDir = dir.absolutePath
+                sessionShizuku = shizuku
+                if (session != null) cwd = dir.absolutePath
+            }
+            val shell = session ?: return@withContext ShellResult(
+                false,
+                "无法启动终端。\n工作目录：${dir.absolutePath}",
+            )
+
+            val result = shell.run(command, TIMEOUT_MS)
+            if (result.ok || result.exitCode >= 0) {
+                val newDir = shell.cwd
+                if (newDir.isNotBlank()) cwd = newDir
+            }
+            if (shell.dead) {
+                runCatching { shell.close() }
+                session = null
+            }
+            result
+        }
+    }
 
     fun listDir(path: String): List<WorkspaceFile> {
         val dir = File(path)
@@ -89,5 +100,148 @@ object ShellRunner {
     fun ensureDir(path: String): Boolean {
         val dir = File(path)
         return dir.exists() || dir.mkdirs()
+    }
+}
+
+private class PersistentShell(dir: File, useShizuku: Boolean) {
+
+    private val process: Process
+    private val writer: BufferedWriter
+    private val lock = Object()
+    private val buffer = StringBuilder()
+    private val nonce = System.nanoTime().toString()
+
+    @Volatile
+    var cwd: String = dir.absolutePath
+        private set
+
+    @Volatile
+    var dead: Boolean = false
+        private set
+
+    private var pendingMarker: String? = null
+    private var sawMarker = false
+    private var exitCode = 0
+
+    init {
+        val started = if (useShizuku) {
+            ShizukuShell.newShell(dir)
+        } else {
+            ProcessBuilder("/system/bin/sh")
+                .apply {
+                    directory(dir)
+                    redirectErrorStream(true)
+                    environment()["LANG"] = "en_US.UTF-8"
+                    environment()["LC_ALL"] = "en_US.UTF-8"
+                    environment()["TMPDIR"] = "/data/local/tmp"
+                }
+                .start()
+        }
+        process = started ?: throw IOException("终端启动失败")
+        writer = process.outputStream.bufferedWriter(Charsets.UTF_8)
+
+        Thread {
+            runCatching {
+                process.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                    while (true) {
+                        val line = reader.readLine() ?: break
+                        synchronized(lock) {
+                            val marker = pendingMarker
+                            if (marker != null && line.startsWith(marker)) {
+                                val parts = line.split('\t')
+                                exitCode = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: 0
+                                parts.getOrNull(2)?.trim()?.takeIf { it.isNotBlank() }?.let { cwd = it }
+                                sawMarker = true
+                                lock.notifyAll()
+                            } else {
+                                if (buffer.length < MAX) {
+                                    buffer.append(line).append('\n')
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            synchronized(lock) {
+                dead = true
+                sawMarker = true
+                lock.notifyAll()
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
+    fun run(command: String, timeoutMs: Long): ShellResult {
+        // 空命令直接返回当前目录
+        if (command.isBlank()) return ShellResult(true, "")
+
+        synchronized(lock) {
+            if (dead) return ShellResult(false, "终端已退出，请重新打开终端", -1)
+            buffer.setLength(0)
+            val marker = "__LOCALAI_DONE_${nonce}_${System.nanoTime()}"
+            pendingMarker = marker
+            sawMarker = false
+            exitCode = 0
+            try {
+                // 每条命令单独执行，记录退出码和当前目录，便于 cd 之后提示符跟着变
+                writer.write(command)
+                writer.write("\n")
+                writer.write("printf '%s\\t%s\\t%s\\n' \"$marker\" \"\$?\" \"\$PWD\"\n")
+                writer.flush()
+            } catch (e: Exception) {
+                dead = true
+                return ShellResult(false, "终端写入失败：${e.message}", -1)
+            }
+
+            val deadline = System.currentTimeMillis() + timeoutMs
+            while (!sawMarker) {
+                val left = deadline - System.currentTimeMillis()
+                if (left <= 0) break
+                try {
+                    lock.wait(minOf(left, 200))
+                } catch (_: InterruptedException) {
+                    break
+                }
+            }
+
+            val timedOut = !sawMarker
+            pendingMarker = null
+            if (timedOut) {
+                dead = true
+                runCatching { process.destroyForcibly() }
+                val partial = synchronized(lock) { buffer.toString().trim() }
+                return ShellResult(
+                    false,
+                    buildString {
+                        appendLine("命令执行超过 ${timeoutMs / 1000} 秒，已强制终止。")
+                        appendLine("提示：交互式命令（如 top、logcat）请加超时参数，例如 timeout 5 top")
+                        if (partial.isNotBlank()) appendLine().append(partial)
+                    },
+                    -1,
+                )
+            }
+
+            val text = synchronized(lock) { buffer.toString() }.trimEnd()
+            val ok = exitCode == 0
+            val shown = if (text.length > MAX) {
+                text.take(MAX) + "\n…（输出过长，已截断）"
+            } else {
+                text.ifBlank { if (ok) "（命令没有输出）" else "（命令失败，退出码 $exitCode）" }
+            }
+            return ShellResult(ok, shown, exitCode)
+        }
+    }
+
+    fun close() {
+        synchronized(lock) {
+            dead = true
+            sawMarker = true
+            lock.notifyAll()
+        }
+        runCatching { writer.close() }
+        runCatching { process.destroyForcibly() }
+    }
+
+    companion object {
+        const val MAX = 8000
     }
 }

@@ -228,7 +228,8 @@ private fun RemoteRow(
                         .padding(top = 8.dp),
                 )
                 Text(
-                    "${formatBytes(progress.received)} / ${formatBytes(progress.total)}",
+                    "${(ratio(progress.received, progress.total) * 100).toInt()}%  " +
+                        "${formatBytes(progress.received)} / ${formatBytes(progress.total)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),

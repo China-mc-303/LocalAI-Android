@@ -33,7 +33,7 @@ object PhoneControl {
     fun overlayAllowed(context: Context): Boolean = Settings.canDrawOverlays(context)
 
     fun isPhoneAction(name: String?): Boolean =
-        name in setOf("tap", "swipe", "type", "back", "home", "open_app", "screen_text")
+        name in setOf("tap", "tap_text", "swipe", "type", "back", "home", "open_app", "screen_text")
 
     /** 执行一个手机操作，返回给模型看的自然语言结果。 */
     fun run(context: Context, call: JsonObject): String {
@@ -49,6 +49,7 @@ object PhoneControl {
                     val y = call.flt("y") ?: return "tap 缺少 y 坐标（0~1）"
                     if (service.tap(x, y)) "已点击 (${fmt(x)}, ${fmt(y)})" else "点击失败"
                 }
+                "tap_text" -> service.tapText(call.str("text"))
                 "swipe" -> {
                     val x1 = call.flt("x1") ?: call.flt("fromX")
                     val y1 = call.flt("y1") ?: call.flt("fromY")

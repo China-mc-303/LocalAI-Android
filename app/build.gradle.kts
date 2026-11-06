@@ -23,8 +23,8 @@ android {
         applicationId = "com.buxingjie.localai"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "3.4.2"
+        versionCode = 11
+        versionName = "3.5.0"
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -110,6 +110,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
 
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+
+    // Shizuku：授权后以 shell 权限执行终端命令
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

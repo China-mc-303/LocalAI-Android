@@ -36,6 +36,7 @@ import com.buxingjie.localai.net.UpdateDownloader
 import com.buxingjie.localai.net.UpdateInfo
 import com.buxingjie.localai.service.QuickStopService
 import com.buxingjie.localai.tools.PhoneControl
+import com.buxingjie.localai.tools.ShizukuShell
 import com.buxingjie.localai.tools.ShellRunner
 import com.buxingjie.localai.tools.ToolCall
 import com.buxingjie.localai.tools.ToolProtocol
@@ -49,6 +50,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import rikka.shizuku.Shizuku
 import java.io.File
 import java.io.IOException
 import java.util.UUID
@@ -126,6 +128,12 @@ data class ChatUiState(
     val publicMessages: List<com.buxingjie.localai.net.PublicMessage> = emptyList(),
     val publicBusy: Boolean = false,
     val publicName: String = "",
+    val testingRemote: Boolean = false,
+    val shizukuAvailable: Boolean = false,
+    val shizukuGranted: Boolean = false,
+    val shizukuUid: String = "",
+    val deliveredFiles: List<WorkspaceFile> = emptyList(),
+    val shellDir: String = "",
 )
 
 private data class EngineSnapshot(
@@ -171,6 +179,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             downloadHistory = prefs.downloadHistory,
             workingDir = workDir,
             workspacePath = workDir,
+            shellDir = workDir,
             terminalLines = terminalStore.load(prefs.engine),
             primaryColor = prefs.primaryColor,
             accentColor = prefs.accentColor,
@@ -195,6 +204,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val shizukuPermissionListener =
+        Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
+            if (requestCode == ShizukuShell.REQUEST_CODE) {
+                ShellRunner.reset()
+                refreshSystemState()
+                val granted = grantResult == android.content.pm.PackageManager.PERMISSION_GRANTED
+                _state.update {
+                    it.copy(
+                        status = if (granted) {
+                            "Shizuku 授权成功，终端已切换为 shell 权限"
+                        } else {
+                            "Shizuku 授权未通过，终端仍使用普通应用权限"
+                        },
+                    )
+                }
+            }
+        }
+
     init {
         val stored = session.messages
         if (stored.isNotEmpty()) {
@@ -208,6 +235,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         refreshSystemState()
         prefs.workingDir = workDir
         refreshWorkspace(workDir)
+        runCatching { Shizuku.addRequestPermissionResultListener(shizukuPermissionListener) }
 
         val app = getApplication<Application>()
         val filter = IntentFilter(PhoneControl.ACTION_EMERGENCY_STOP)
@@ -230,6 +258,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         runCatching { getApplication<Application>().unregisterReceiver(stopReceiver) }
+        runCatching { Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener) }
+        ShellRunner.reset()
         client.cancel()
         super.onCleared()
     }
@@ -434,6 +464,67 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun currentProvider(): AiProvider? = AiProvider.fromId(prefs.engine)
 
+    /** 在线模型缺少哪些配置，直接告诉用户缺什么，避免“以为在用模型其实没连通”。 */
+    private fun missingConfigHint(): String {
+        val provider = currentProvider() ?: return "在线模型配置异常，请在设置里重新选择模型"
+        val config = prefs.config(provider)
+        val missing = buildList {
+            if (config.baseUrl.isBlank()) add("接口地址")
+            if (config.model.isBlank()) add("模型名称")
+            if (config.apiKey.isBlank() && provider != AiProvider.CUSTOM) add("API Key")
+        }
+        val detail = if (missing.isEmpty()) "接口配置不完整" else "缺少${missing.joinToString("、")}"
+        return "还没有连上 ${provider.label}：$detail。请到“设置”补全后点“测试连接”。"
+    }
+
+    /** 真实发一次请求验证在线模型是否可用。 */
+    fun testRemoteConnection() {
+        val provider = currentProvider()
+        if (provider == null) {
+            _state.update { it.copy(error = "当前是本地模型引擎，请先在设置里选择在线模型") }
+            return
+        }
+        val config = prefs.config(provider)
+        if (!config.ready) {
+            _state.update { it.copy(error = missingConfigHint()) }
+            return
+        }
+        if (_state.value.testingRemote) return
+        viewModelScope.launch {
+            _state.update { it.copy(testingRemote = true, status = "正在测试 ${provider.label} 连接…") }
+            val result = runCatching {
+                client.stream(
+                    RemoteRequest(
+                        baseUrl = config.baseUrl,
+                        apiKey = config.apiKey,
+                        model = config.model,
+                        messages = listOf(ChatMsg("user", "只回复两个字：成功")),
+                        temperature = 0f,
+                        maxTokens = 24,
+                    )
+                ) {}
+            }
+            _state.update { current ->
+                result.fold(
+                    onSuccess = { reply ->
+                        current.copy(
+                            testingRemote = false,
+                            status = "连接成功：${provider.label} · ${config.model} 返回「${reply.trim().take(40)}」",
+                            error = null,
+                        )
+                    },
+                    onFailure = { e ->
+                        current.copy(
+                            testingRemote = false,
+                            status = null,
+                            error = "连接失败：${e.message ?: "网络错误"}（地址 ${config.baseUrl}，模型 ${config.model}）",
+                        )
+                    },
+                )
+            }
+        }
+    }
+
     fun selectEngine(id: String) {
         val valid = if (id == "local") true else AiProvider.fromId(id) != null
         if (!valid) return
@@ -491,8 +582,79 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 accessibilityEnabled = PhoneControl.serviceReady(),
                 overlayEnabled = PhoneControl.overlayAllowed(app),
+                shizukuAvailable = ShizukuShell.installed(),
+                shizukuGranted = ShizukuShell.granted(),
+                shizukuUid = ShizukuShell.uidLabel(),
             )
         }
+    }
+
+    /** 请求 Shizuku 授权，成功后终端会以 shell 权限运行。 */
+    fun requestShizukuPermission() {
+        if (!ShizukuShell.installed()) {
+            _state.update {
+                it.copy(error = "没有检测到 Shizuku。请先安装 Shizuku 并启动服务，或通过电脑 adb 启动 Shizuku")
+            }
+            return
+        }
+        if (ShizukuShell.granted()) {
+            _state.update { it.copy(status = "已拥有 Shizuku shell 权限，无需重复授权") }
+            return
+        }
+        ShizukuShell.requestPermission()
+        _state.update { it.copy(status = "已发送 Shizuku 授权请求，请在弹窗中允许") }
+    }
+
+    /** 打开 Shizuku 管理器（已安装时）。 */
+    fun openShizukuManager() {
+        val app = getApplication<Application>()
+        val intent = app.packageManager.getLaunchIntentForPackage(ShizukuShell.managerPackage())
+        if (intent != null) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching { app.startActivity(intent) }
+                .onFailure { _state.update { s -> s.copy(error = "无法打开 Shizuku 管理器") } }
+        } else {
+            _state.update { it.copy(error = "未安装 Shizuku，请先从应用商店或 GitHub 安装") }
+        }
+    }
+
+    fun shareFile(path: String) {
+        val app = getApplication<Application>()
+        val file = File(path)
+        if (!file.isFile) {
+            _state.update { it.copy(error = "文件不存在，可能已被移动或删除") }
+            return
+        }
+        val uri = runCatching {
+            FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
+        }.getOrElse {
+            _state.update { s -> s.copy(error = "文件分享失败：${it.message}") }
+            return
+        }
+        val mime = when (file.name.substringAfterLast('.', "").lowercase()) {
+            "txt", "md", "log", "json", "xml", "csv" -> "text/plain"
+            "html", "htm" -> "text/html"
+            "png" -> "image/png"
+            "jpg", "jpeg" -> "image/jpeg"
+            "pdf" -> "application/pdf"
+            "zip" -> "application/zip"
+            "apk" -> "application/vnd.android.package-archive"
+            else -> "application/octet-stream"
+        }
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = mime
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching {
+            app.startActivity(Intent.createChooser(send, "分享 ${file.name}").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure {
+            _state.update { s -> s.copy(error = "没有可以分享文件的应用") }
+        }
+    }
+
+    fun clearDeliveredFiles() {
+        _state.update { it.copy(deliveredFiles = emptyList()) }
     }
 
     // ---------------- models ----------------
@@ -685,14 +847,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun runTerminal(command: String) {
         val value = command.trim()
         if (value.isEmpty() || _state.value.terminalBusy) return
-        appendTerminal("$ $value", "input")
+        appendTerminal("${_state.value.shellDir.ifBlank { _state.value.workingDir }}> $value", "input")
         viewModelScope.launch {
             _state.update { it.copy(terminalBusy = true) }
             val result = withContext(Dispatchers.IO) {
                 ShellRunner.run(value, _state.value.workingDir)
             }
             appendTerminal(result.output, if (result.ok) "output" else "error")
-            _state.update { it.copy(terminalBusy = false) }
+            _state.update {
+                it.copy(
+                    terminalBusy = false,
+                    shellDir = ShellRunner.currentDir(it.workingDir),
+                )
+            }
             refreshWorkspace(_state.value.workspacePath)
         }
     }
@@ -723,10 +890,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         prefs.workingDir = dir.absolutePath
+        ShellRunner.reset()
         _state.update {
             it.copy(
                 workingDir = dir.absolutePath,
                 workspacePath = dir.absolutePath,
+                shellDir = dir.absolutePath,
                 status = "工作目录已设置为 ${dir.absolutePath}",
             )
         }
@@ -884,9 +1053,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val current = _state.value
         if (current.generating) return
         if (!current.engineReady) {
-            _state.update {
-                it.copy(error = if (current.engineId == "local") "还没有加载本地模型，请先到“模型”页加载" else "请先在设置中填写在线模型的 API Key")
+            val detail = if (current.engineId == "local") {
+                "还没有加载本地模型，请先到“模型”页加载"
+            } else {
+                missingConfigHint()
             }
+            _state.update { it.copy(error = detail) }
             return
         }
         val history = current.messages.map { StoredMessage(it.role, it.content) }
@@ -917,9 +1089,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun sendPrompt(display: String, modelText: String) {
         val current = _state.value
         if (!current.engineReady) {
-            _state.update {
-                it.copy(error = if (current.engineId == "local") "还没有加载本地模型，请先到“模型”页加载" else "请先在设置中填写在线模型的 API Key")
+            val detail = if (current.engineId == "local") {
+                "还没有加载本地模型，请先到“模型”页加载"
+            } else {
+                missingConfigHint()
             }
+            _state.update { it.copy(error = detail) }
             return
         }
         if (current.generating) return
@@ -1090,15 +1265,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val provider = currentProvider()
         if (provider == null) {
-            // 引擎配置异常时兜底走本地，避免“选在线却悄悄没反应”
-            runLocal(answerId, modelText, history, allowRetry = true)
+            // 不再静默回退到本地模型，直接告诉用户配置异常，避免“以为在用 API 其实没有”
+            val message = "在线模型配置异常：没有识别到当前平台。请回到设置重新选择模型后再试。"
+            updateAnswer(answerId, message, streaming = false)
+            _state.update { it.copy(generating = false, error = message, status = null) }
             return
         }
         val config = prefs.config(provider)
         if (!config.ready) {
-            updateAnswer(answerId, "请先在设置里填写 ${provider.label} 的 API Key", streaming = false)
-            _state.update { it.copy(generating = false) }
+            val message = missingConfigHint()
+            updateAnswer(answerId, message, streaming = false)
+            _state.update { it.copy(generating = false, error = message, status = null) }
             return
+        }
+        _state.update {
+            it.copy(status = "正在使用 ${provider.label} · ${config.model} 回答")
         }
 
         val messages = ArrayList<ChatMsg>()
@@ -1176,13 +1357,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (call.name == "shell") {
             val command = ToolProtocol.arg(call, "cmd")
             if (command.isBlank()) return "shell 缺少 cmd 参数"
-            appendTerminal("$ $command", "input")
+            appendTerminal("${_state.value.shellDir.ifBlank { _state.value.workingDir }}> $command", "input")
             _state.update { it.copy(status = "执行终端命令：${command.take(40)}…") }
             val result = withContext(Dispatchers.IO) {
                 ShellRunner.run(command, _state.value.workingDir)
             }
             appendTerminal(result.output, if (result.ok) "output" else "error")
-            _state.update { it.copy(status = null) }
+            _state.update {
+                it.copy(
+                    status = null,
+                    shellDir = ShellRunner.currentDir(it.workingDir),
+                )
+            }
             refreshWorkspace(_state.value.workspacePath)
             return "命令已执行（${if (result.ok) "成功" else "失败"}），工作目录 ${_state.value.workingDir}\n输出：\n${result.output.take(3000)}"
         }
@@ -1216,7 +1402,32 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 call,
                 webEnabled = _state.value.webToolsEnabled,
                 phoneEnabled = _state.value.phoneToolsEnabled,
+                workDir = _state.value.workingDir,
             )
+        }
+        if (call.name == "write_file" && result.startsWith("已生成文件：")) {
+            val savedPath = result.lineSequence()
+                .firstOrNull { it.startsWith("保存位置：") }
+                ?.removePrefix("保存位置：")
+                ?.trim()
+                .orEmpty()
+            val file = File(savedPath)
+            if (file.isFile) {
+                val item = WorkspaceFile(
+                    name = file.name,
+                    path = file.absolutePath,
+                    isDir = false,
+                    sizeBytes = file.length(),
+                )
+                _state.update { current ->
+                    current.copy(
+                        deliveredFiles = (current.deliveredFiles + item)
+                            .distinctBy { it.path }
+                            .takeLast(20),
+                    )
+                }
+                refreshWorkspace(_state.value.workspacePath)
+            }
         }
         if (phoneAction) {
             QuickStopService.stop(app)

@@ -196,6 +196,35 @@ fun ChatScreen(
                 .fillMaxWidth()
                 .padding(horizontal = 10.dp, vertical = 8.dp)
         ) {
+            if (state.deliveredFiles.isNotEmpty()) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "AI 生成的文件",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { viewModel.clearDeliveredFiles() }) { Text("清除") }
+                }
+                state.deliveredFiles.takeLast(3).reversed().forEach { file ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(file.name, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                            Text(
+                                when {
+                                    file.sizeBytes < 1024 -> "${file.sizeBytes} 字节"
+                                    file.sizeBytes < 1024 * 1024 -> "${file.sizeBytes / 1024} KB"
+                                    else -> "${file.sizeBytes / 1024 / 1024} MB"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        TextButton(onClick = { viewModel.shareFile(file.path) }) { Text("分享") }
+                    }
+                }
+                HorizontalDivider(Modifier.padding(bottom = 4.dp))
+            }
             if (!state.engineReady && !state.modelLoading) {
                 Row(
                     Modifier.fillMaxWidth(),

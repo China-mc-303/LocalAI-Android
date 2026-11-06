@@ -135,10 +135,16 @@ fun TerminalScreen(
 private fun TerminalConsole(state: ChatUiState, viewModel: ChatViewModel) {
     var command by rememberSaveable { androidx.compose.runtime.mutableStateOf("") }
     val listState = rememberLazyListState()
+    val cwd = state.shellDir.ifBlank { state.workingDir }
 
     fun submit() {
         val value = command.trim()
         if (value.isEmpty() || state.terminalBusy) return
+        if (value == "clear" || value == "cls") {
+            viewModel.clearTerminal()
+            command = ""
+            return
+        }
         viewModel.runTerminal(value)
         command = ""
     }
@@ -151,44 +157,87 @@ private fun TerminalConsole(state: ChatUiState, viewModel: ChatViewModel) {
 
     Column(Modifier.fillMaxSize()) {
         GlassPanel(Modifier.fillMaxWidth().weight(1f)) {
-            if (state.terminalLines.isEmpty()) {
+            Column(Modifier.fillMaxSize()) {
                 Text(
-                    "这是 ${state.engineLabel} 的独立终端。\n命令在 ${state.workingDir} 中执行。\n\n例如：\n  ls -la\n  unzip -l demo.zip\n  cat note.txt",
-                    style = MaterialTheme.typography.bodySmall,
+                    "LocalAI CMD [版本 ${com.buxingjie.localai.BuildConfig.VERSION_NAME}]\n" +
+                        "(c) 步行街工作室。输入 cls 清屏，cd 会保持目录。",
+                    style = MaterialTheme.typography.labelSmall,
                     fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(14.dp),
+                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 6.dp),
                 )
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    items(state.terminalLines) { line ->
-                        Text(
-                            text = line.text,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = when (line.kind) {
-                                "input" -> MaterialTheme.colorScheme.primary
-                                "error" -> MaterialTheme.colorScheme.error
-                                "info" -> MaterialTheme.colorScheme.onSurfaceVariant
-                                else -> MaterialTheme.colorScheme.onSurface
-                            },
-                        )
+                HorizontalDivider(Modifier.padding(horizontal = 10.dp))
+                if (state.terminalLines.isEmpty()) {
+                    Text(
+                        "当前 AI：${state.engineLabel}\n" +
+                            "终端身份：${if (state.shizukuGranted) "shell（Shizuku 已授权）" else "普通应用权限"}\n" +
+                            "工作目录：$cwd\n\n" +
+                            "常用命令：\n" +
+                            "  pwd            显示当前目录\n" +
+                            "  ls -la         列出文件\n" +
+                            "  cd 目录        切换目录（会保持）\n" +
+                            "  cat note.txt   查看文本文件\n" +
+                            "  unzip -l a.zip 查看压缩包\n" +
+                            "  cls            清屏",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(14.dp),
+                    )
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        items(state.terminalLines) { line ->
+                            Text(
+                                text = line.text,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = when (line.kind) {
+                                    "input" -> MaterialTheme.colorScheme.primary
+                                    "error" -> MaterialTheme.colorScheme.error
+                                    "info" -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    else -> MaterialTheme.colorScheme.onSurface
+                                },
+                            )
+                        }
                     }
                 }
             }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            listOf("pwd", "ls -la", "cd /sdcard", "cls").forEach { quick ->
+                FilterChip(
+                    selected = false,
+                    onClick = {
+                        if (quick == "cls") viewModel.clearTerminal()
+                        else if (!state.terminalBusy) viewModel.runTerminal(quick)
+                    },
+                    label = { Text(quick, fontFamily = FontFamily.Monospace) },
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                cwd.takeLast(18) + ">",
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(end = 6.dp),
+            )
             OutlinedTextField(
                 value = command,
                 onValueChange = { command = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("输入命令，例如 ls -la") },
+                placeholder = { Text("输入命令，例如 ls -la", fontFamily = FontFamily.Monospace) },
                 singleLine = true,
                 shape = RoundedCornerShape(20.dp),
                 textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),

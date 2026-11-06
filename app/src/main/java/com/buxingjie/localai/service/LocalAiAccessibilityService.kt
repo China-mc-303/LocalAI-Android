@@ -82,6 +82,65 @@ class LocalAiAccessibilityService : AccessibilityService() {
         return gesture { path -> path.moveTo(x, y) }
     }
 
+    /**
+     * 按屏幕上的文字点击，比坐标更可靠：先找文字完全匹配的节点，
+     * 再找包含关键词的节点，最后向上找可点击的父节点。
+     */
+    fun tapText(query: String): String {
+        val keyword = query.trim()
+        if (keyword.isBlank()) return "tap_text 缺少要点击的文字"
+        val roots = ArrayList<AccessibilityNodeInfo>()
+        windows.forEach { window -> window.root?.let { roots.add(it) } }
+        if (roots.isEmpty()) rootInActiveWindow?.let { roots.add(it) }
+
+        var exact: AccessibilityNodeInfo? = null
+        var contains: AccessibilityNodeInfo? = null
+        var visited = 0
+
+        fun walk(node: AccessibilityNodeInfo?) {
+            if (node == null || exact != null || visited >= 600) return
+            visited++
+            val text = node.text?.toString()?.trim().orEmpty()
+            val desc = node.contentDescription?.toString()?.trim().orEmpty()
+            val label = if (text.length >= desc.length) text else desc
+            if (label.isNotBlank() && node.isVisibleToUser) {
+                if (label.equals(keyword, ignoreCase = true)) {
+                    exact = node
+                    return
+                }
+                if (contains == null && label.contains(keyword, ignoreCase = true)) {
+                    contains = node
+                }
+            }
+            for (i in 0 until node.childCount) {
+                walk(node.getChild(i))
+                if (exact != null) return
+            }
+        }
+
+        roots.forEach { walk(it) }
+        val target = exact ?: contains
+            ?: return "屏幕上没有找到「$keyword」。可以先调用 screen_text 看看当前页面，或换一个更短的关键词"
+
+        var clickable: AccessibilityNodeInfo? = target
+        while (clickable != null && !clickable.isClickable) {
+            clickable = clickable.parent
+        }
+        if (clickable != null && clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            return "已点击「$keyword」"
+        }
+
+        // 节点本身不可点击时，用文字中心点做手势点击兜底
+        val rect = android.graphics.Rect()
+        target.getBoundsInScreen(rect)
+        if (rect.width() <= 0 || rect.height() <= 0) return "找到了「$keyword」但没有可点击区域"
+        val width = resources.displayMetrics.widthPixels.toFloat()
+        val height = resources.displayMetrics.heightPixels.toFloat()
+        val cx = ((rect.left + rect.right) / 2f) / width
+        val cy = ((rect.top + rect.bottom) / 2f) / height
+        return if (tap(cx, cy)) "已点击「$keyword」" else "点击「$keyword」失败"
+    }
+
     fun swipe(x1: Float, y1: Float, x2: Float, y2: Float): Boolean {
         val width = resources.displayMetrics.widthPixels.toFloat()
         val height = resources.displayMetrics.heightPixels.toFloat()
