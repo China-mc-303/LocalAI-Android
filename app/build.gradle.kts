@@ -23,8 +23,8 @@ android {
         applicationId = "com.buxingjie.localai"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "3.4.0"
+        versionCode = 9
+        versionName = "3.4.1"
 
         ndk {
             abiFilters += "arm64-v8a"

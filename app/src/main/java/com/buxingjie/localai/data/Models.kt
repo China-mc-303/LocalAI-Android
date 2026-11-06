@@ -204,6 +204,36 @@ class ModelRepository(private val context: Context) {
     companion object {
         val REMOTE_MODELS = listOf(
             RemoteModel(
+                id = "hunyuan-0.5b",
+                name = "混元 0.5B（元宝同款）· Q4",
+                fileName = "hunyuan-0.5b-instruct-q4_k_m.gguf",
+                sizeBytes = 355_676_160,
+                params = "0.5B",
+                description = "腾讯元宝官方开源模型离线版，混元团队出品，速度极快",
+                url = "https://gh-proxy.com/https://github.com/China-mc-303/LocalAI-Android/releases/download/v3.4.1/hunyuan-0.5b-instruct-q4_k_m.gguf",
+                fallbackUrl = "https://github.com/China-mc-303/LocalAI-Android/releases/download/v3.4.1/hunyuan-0.5b-instruct-q4_k_m.gguf",
+            ),
+            RemoteModel(
+                id = "deepseek-r1-1.5b",
+                name = "DeepSeek-R1 1.5B · Q4",
+                fileName = "DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
+                sizeBytes = 1_117_320_800,
+                params = "1.5B",
+                description = "DeepSeek 蒸馏推理模型离线版，会先思考再回答，数学推理强",
+                url = "https://modelscope.cn/models/bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
+                fallbackUrl = "https://hf-mirror.com/bartowski/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
+            ),
+            RemoteModel(
+                id = "glm-edge-1.5b",
+                name = "GLM-Edge 1.5B（智谱）· Q4",
+                fileName = "glm-edge-1.5b-chat-q4_k_m.gguf",
+                sizeBytes = 980_470_144,
+                params = "1.5B",
+                description = "智谱清言团队端侧模型，专为手机等边缘设备优化",
+                url = "https://modelscope.cn/models/ZhipuAI/glm-edge-1.5b-chat-gguf/resolve/master/ggml-model-Q4_K_M.gguf",
+                fallbackUrl = "https://hf-mirror.com/zai-org/glm-edge-1.5b-chat-gguf/resolve/main/ggml-model-Q4_K_M.gguf",
+            ),
+            RemoteModel(
                 id = "qwen2.5-0.5b",
                 name = "Qwen2.5 0.5B · Q4",
                 fileName = "qwen2.5-0.5b-instruct-q4_k_m.gguf",
