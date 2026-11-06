@@ -72,7 +72,13 @@ fun TerminalScreen(
         onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
-        LiquidBackground {
+        LiquidBackground(
+            primaryColor = MaterialTheme.colorScheme.primary,
+            accentColor = MaterialTheme.colorScheme.secondary,
+            opacity = 0.14f,
+            wallpaperPath = state.wallpaperPath,
+            wallpaperBlur = state.wallpaperBlur,
+        ) {
             Column(
                 Modifier
                     .fillMaxSize()
@@ -296,7 +302,13 @@ private fun PreviewDialog(state: ChatUiState, viewModel: ChatViewModel) {
         onDismissRequest = { viewModel.closePreview() },
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        LiquidBackground {
+        LiquidBackground(
+            primaryColor = MaterialTheme.colorScheme.primary,
+            accentColor = MaterialTheme.colorScheme.secondary,
+            opacity = 0.14f,
+            wallpaperPath = state.wallpaperPath,
+            wallpaperBlur = state.wallpaperBlur,
+        ) {
             Box(
                 Modifier
                     .fillMaxSize()

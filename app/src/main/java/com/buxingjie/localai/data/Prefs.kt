@@ -63,6 +63,26 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("tool_phone", true)
         set(value) = sp.edit().putBoolean("tool_phone", value).apply()
 
+    var primaryColor: Long
+        get() = sp.getLong("theme_primary", 0xFF2DD4BF)
+        set(value) = sp.edit().putLong("theme_primary", value).apply()
+
+    var accentColor: Long
+        get() = sp.getLong("theme_accent", 0xFF7DD3FC)
+        set(value) = sp.edit().putLong("theme_accent", value).apply()
+
+    var glassOpacity: Float
+        get() = sp.getFloat("glass_opacity", 0.16f)
+        set(value) = sp.edit().putFloat("glass_opacity", value).apply()
+
+    var wallpaperPath: String?
+        get() = sp.getString("wallpaper_path", null)
+        set(value) = sp.edit().putString("wallpaper_path", value).apply()
+
+    var wallpaperBlur: Int
+        get() = sp.getInt("wallpaper_blur", 0)
+        set(value) = sp.edit().putInt("wallpaper_blur", value).apply()
+
     fun apiKey(provider: AiProvider): String =
         sp.getString("p_${provider.id}_key", "") ?: ""
 

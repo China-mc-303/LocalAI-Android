@@ -38,6 +38,7 @@ object ToolProtocol {
 4. 一次只调用一个工具，拿到结果后再继续，最多 4 轮。
 5. 不需要工具时，直接正常回答，不要输出 JSON。
 6. 用户可能随时紧急停止手机操作，被停止后立即停止调用工具。
+7. 打开应用时如果返回“没有找到应用”，必须如实告诉用户该应用未安装，不要编造已打开。
 """.trim()
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }

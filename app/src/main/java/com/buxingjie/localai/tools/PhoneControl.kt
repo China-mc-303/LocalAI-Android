@@ -74,15 +74,65 @@ object PhoneControl {
         val manager = context.packageManager
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val activities = runCatching { manager.queryIntentActivities(intent, 0) }.getOrDefault(emptyList())
-        val target = activities.firstOrNull { info ->
+
+        // 智能匹配：优先精确匹配，然后按名称相似度排序
+        val candidates = activities.mapNotNull { info ->
             val label = info.loadLabel(manager).toString()
-            label.equals(query, ignoreCase = true) || label.contains(query, ignoreCase = true) ||
-                info.activityInfo.packageName.contains(query, ignoreCase = true)
-        } ?: return "没有找到应用“$query”，请确认已安装"
-        val launch = manager.getLaunchIntentForPackage(target.activityInfo.packageName) ?: return "无法启动 ${target.loadLabel(manager)}"
+            val packageName = info.activityInfo.packageName
+            val score = matchScore(query, label, packageName)
+            if (score > 0) Triple(info, label, score) else null
+        }.sortedByDescending { it.third }
+
+        if (candidates.isEmpty()) {
+            return "没有找到应用“$query”。请确认该应用已安装，或尝试输入更准确的名称。"
+        }
+
+        val best = candidates.first()
+        val launch = manager.getLaunchIntentForPackage(best.first.activityInfo.packageName)
+            ?: return "找到了应用「${best.second}」但无法启动，请检查应用状态。"
+
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
-        context.startActivity(launch)
-        return "已打开 ${target.loadLabel(manager)}"
+        return try {
+            context.startActivity(launch)
+            if (best.third >= 80) "已打开「${best.second}」"
+            else "已打开最匹配的应用「${best.second}」（原请求：$query）"
+        } catch (e: Exception) {
+            "启动「${best.second}」失败：${e.message ?: "系统拒绝"}"
+        }
+    }
+
+    private fun matchScore(query: String, label: String, packageName: String): Int {
+        val q = query.lowercase().trim()
+        val l = label.lowercase()
+        val p = packageName.lowercase()
+
+        if (l == q || p == q) return 100
+        if (l.startsWith(q) || p.startsWith(q)) return 90
+        if (l.contains(q) || p.contains(q)) return 80
+
+        // 拼音/英文常见映射
+        val aliases = mapOf(
+            "wechat" to "微信", "weixin" to "微信",
+            "douyin" to "抖音", "tiktok" to "抖音",
+            "taobao" to "淘宝", "alipay" to "支付宝",
+            "bilibili" to "哔哩哔哩", "b站" to "哔哩哔哩",
+            "qq" to "QQ", "qqbrowser" to "QQ浏览器",
+            "kuaishou" to "快手", "xhs" to "小红书",
+            "xiaohongshu" to "小红书", "red" to "小红书",
+            "netease" to "网易云音乐", "cloudmusic" to "网易云音乐",
+            "iqiyi" to "爱奇艺", "youku" to "优酷",
+            "meituan" to "美团", "didi" to "滴滴出行",
+            "jd" to "京东", "pdd" to "拼多多",
+        )
+        for ((k, v) in aliases) {
+            if (q.contains(k) && (l.contains(v.lowercase()) || l.contains(k))) return 70
+        }
+
+        // 字符重叠度
+        val common = q.toSet().intersect(l.toSet()).size
+        if (common >= minOf(q.length, l.length) / 2) return 50
+
+        return 0
     }
 
     private fun JsonObject.str(key: String): String =

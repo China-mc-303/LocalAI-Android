@@ -117,6 +117,11 @@ data class ChatUiState(
     val updateProgress: Float = 0f,
     val updateError: String? = null,
     val updateApkPath: String? = null,
+    val primaryColor: Long = 0xFF2DD4BF,
+    val accentColor: Long = 0xFF7DD3FC,
+    val glassOpacity: Float = 0.16f,
+    val wallpaperPath: String? = null,
+    val wallpaperBlur: Int = 0,
 )
 
 private data class EngineSnapshot(
@@ -163,6 +168,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             workingDir = workDir,
             workspacePath = workDir,
             terminalLines = terminalStore.load(prefs.engine),
+            primaryColor = prefs.primaryColor,
+            accentColor = prefs.accentColor,
+            glassOpacity = prefs.glassOpacity,
+            wallpaperPath = prefs.wallpaperPath,
+            wallpaperBlur = prefs.wallpaperBlur,
         )
     )
     val state = _state.asStateFlow()
@@ -1250,6 +1260,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         prefs.contextSize = value
         _state.update { it.copy(contextSize = value) }
         reloadIfLoaded()
+    }
+
+    fun setPrimaryColor(value: Long) {
+        prefs.primaryColor = value
+        _state.update { it.copy(primaryColor = value) }
+    }
+
+    fun setAccentColor(value: Long) {
+        prefs.accentColor = value
+        _state.update { it.copy(accentColor = value) }
+    }
+
+    fun setGlassOpacity(value: Float) {
+        prefs.glassOpacity = value
+        _state.update { it.copy(glassOpacity = value) }
+    }
+
+    fun setWallpaperPath(value: String?) {
+        prefs.wallpaperPath = value
+        _state.update { it.copy(wallpaperPath = value) }
+    }
+
+    fun setWallpaperBlur(value: Int) {
+        prefs.wallpaperBlur = value
+        _state.update { it.copy(wallpaperBlur = value) }
     }
 
     private fun reloadIfLoaded() {

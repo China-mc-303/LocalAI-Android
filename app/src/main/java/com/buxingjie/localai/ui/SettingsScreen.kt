@@ -3,7 +3,12 @@ package com.buxingjie.localai.ui
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,11 +16,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -34,12 +38,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.buxingjie.localai.BuildConfig
 import com.buxingjie.localai.data.AiProvider
+import java.io.File
 import kotlin.math.roundToInt
 
 @Composable
@@ -361,6 +367,85 @@ fun SettingsScreen(
                     if (state.updateApkPath != null) {
                         OutlinedButton(onClick = { viewModel.installUpdate() }) { Text("立即安装") }
                     }
+                }
+            }
+        }
+
+        SettingCard {
+            Text("个性化", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "自定义应用主题色、强调色、玻璃透明度与壁纸",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("主题色", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                listOf(
+                    0xFF2DD4BF, 0xFF7DD3FC, 0xFF8A7DD3, 0xFFFF8A80, 0xFFFFB74D, 0xFF81C784
+                ).forEach { color ->
+                    Box(
+                        Modifier
+                            .padding(horizontal = 3.dp)
+                            .background(Color(color), RoundedCornerShape(6.dp))
+                            .height(24.dp)
+                            .width(24.dp)
+                            .clickable { viewModel.setPrimaryColor(color) }
+                    )
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("强调色", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                listOf(
+                    0xFF7DD3FC, 0xFF2DD4BF, 0xFF8A7DD3, 0xFFFF8A80, 0xFFFFB74D, 0xFF81C784
+                ).forEach { color ->
+                    Box(
+                        Modifier
+                            .padding(horizontal = 3.dp)
+                            .background(Color(color), RoundedCornerShape(6.dp))
+                            .height(24.dp)
+                            .width(24.dp)
+                            .clickable { viewModel.setAccentColor(color) }
+                    )
+                }
+            }
+            SliderSetting(
+                title = "玻璃透明度",
+                valueText = "${(state.glassOpacity * 100).roundToInt()}%",
+                hint = "数值越高，玻璃卡片越不透明",
+            ) {
+                Slider(
+                    value = state.glassOpacity,
+                    onValueChange = { viewModel.setGlassOpacity(it) },
+                    valueRange = 0.05f..0.35f,
+                )
+            }
+            val wallpaperLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.GetContent()
+            ) { uri ->
+                uri?.let {
+                    val file = File(context.filesDir, "wallpaper_${System.currentTimeMillis()}.jpg")
+                    runCatching {
+                        context.contentResolver.openInputStream(it)?.use { input ->
+                            file.outputStream().use { output -> input.copyTo(output) }
+                        }
+                        viewModel.setWallpaperPath(file.absolutePath)
+                    }.onFailure { e ->
+                        android.widget.Toast.makeText(context, "设置壁纸失败：${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("壁纸", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        state.wallpaperPath?.let { File(it).name } ?: "默认深色渐变",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                TextButton(onClick = { wallpaperLauncher.launch("image/*") }) { Text("选择图片") }
+                if (state.wallpaperPath != null) {
+                    TextButton(onClick = { viewModel.setWallpaperPath(null) }) { Text("恢复默认") }
                 }
             }
         }

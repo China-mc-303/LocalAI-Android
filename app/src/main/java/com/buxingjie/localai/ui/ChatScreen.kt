@@ -384,7 +384,8 @@ private fun MessageBubble(message: UiMessage) {
         horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
     ) {
         Surface(
-            color = if (isUser) Color(0x2E2DD4BF) else Color(0x14FFFFFF),
+            color = if (isUser) MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
             border = BorderStroke(1.dp, GlassBorder),
             shape = RoundedCornerShape(
                 topStart = 16.dp,

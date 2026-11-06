@@ -62,13 +62,19 @@ fun AppRoot(viewModel: ChatViewModel = viewModel()) {
         }
     }
 
-    LiquidBackground {
+    LiquidBackground(
+        primaryColor = Color(state.primaryColor),
+        accentColor = Color(state.accentColor),
+        opacity = state.glassOpacity,
+        wallpaperPath = state.wallpaperPath,
+        wallpaperBlur = state.wallpaperBlur,
+    ) {
         Scaffold(
             containerColor = Color.Transparent,
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 NavigationBar(
-                    containerColor = Color(0x16FFFFFF),
+                    containerColor = Color.White.copy(alpha = state.glassOpacity * 0.6f),
                     tonalElevation = 0.dp,
                 ) {
                     Tab.entries.forEachIndexed { index, tab ->

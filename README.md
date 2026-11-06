@@ -6,8 +6,8 @@
 
 | 文件 | 说明 |
 |---|---|
-| [LocalAI-v3.1.0.apk](https://github.com/China-mc-303/LocalAI-Android/releases/download/v3.1.0/LocalAI-v3.1.0.apk) | 安装包，Android 8.0+ / arm64-v8a |
-| [LocalAI-v3.1.0-source.zip](https://github.com/China-mc-303/LocalAI-Android/releases/download/v3.1.0/LocalAI-v3.1.0-source.zip) | 完整源码包（含 llama.cpp） |
+| [LocalAI-v3.2.0.apk](https://github.com/China-mc-303/LocalAI-Android/releases/download/v3.2.0/LocalAI-v3.2.0.apk) | 安装包，Android 8.0+ / arm64-v8a |
+| [LocalAI-v3.2.0-source.zip](https://github.com/China-mc-303/LocalAI-Android/releases/download/v3.2.0/LocalAI-v3.2.0-source.zip) | 完整源码包（含 llama.cpp） |
 
 ## 仓库结构
 
@@ -24,6 +24,7 @@ build.gradle.kts      工程配置
 - 应用启动时自动检查 GitHub 最新 Release，发现新版本时弹出玻璃风格弹窗
   - 可在弹窗内下载 APK、直接拉起系统安装器覆盖升级，签名与数据保持一致
   - 也可在「设置 → 版本」手动检查更新
+- 个性化：设置中可自定义主题色、强调色、玻璃透明度与壁纸
 - 液态玻璃风格的半透明 UI（渐变光斑背景 + 磨砂玻璃卡片）
 - 本地 GGUF 模型推理（Qwen2.5 0.5B / 1.5B / 3B），流式输出、多轮对话
 - 在线大模型：DeepSeek、Kimi、豆包（火山方舟）、元宝（腾讯混元）、GPT（可选）、自定义 OpenAI 兼容接口
